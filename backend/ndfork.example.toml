@@ -1,0 +1,11 @@
+# 从 backend 目录启动时使用的音乐站配置。
+MusicFolder = "./music"
+DataFolder = "./data"
+EnableExternalServices = false
+EnableInsightsCollector = false
+
+[LastFM]
+Enabled = false
+
+[ListenBrainz]
+Enabled = false
