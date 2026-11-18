@@ -3,7 +3,7 @@ import isElectron from 'is-electron';
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { MetadataEditor } from '/@/renderer/features/site/metadata-editor';
+import { BatchMetadataEditor, MetadataEditor } from '/@/renderer/features/site/metadata-editor';
 import { useAuthStore } from '/@/renderer/store/auth.store';
 import { ContextMenu } from '/@/shared/components/context-menu/context-menu';
 import { Song } from '/@/shared/types/domain-types';
@@ -26,7 +26,12 @@ export const EditMetadataAction = ({ albumIds, songs: songItems }: EditMetadataA
             const id = albumIds?.[0] || songItems?.[0]?.id;
             if (id)
                 openModal({
-                    children: <MetadataEditor id={id} kind={albumIds?.length ? 'album' : 'song'} />,
+                    children:
+                        !albumIds?.length && (songItems?.length ?? 0) > 1 ? (
+                            <BatchMetadataEditor songs={songItems!} />
+                        ) : (
+                            <MetadataEditor id={id} kind={albumIds?.length ? 'album' : 'song'} />
+                        ),
                     size: 'lg',
                     title: t('site.metadata'),
                 });
@@ -47,7 +52,9 @@ export const EditMetadataAction = ({ albumIds, songs: songItems }: EditMetadataA
         <ContextMenu.Item
             disabled={
                 window.SERVER_NAME === 'ndFork'
-                    ? (albumIds?.length ?? songItems?.length) !== 1
+                    ? albumIds
+                        ? albumIds.length !== 1
+                        : !songItems?.length
                     : count === 0
             }
             leftIcon="edit"

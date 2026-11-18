@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,17 +19,51 @@ import (
 	. "github.com/Masterminds/squirrel"
 	"github.com/go-chi/chi/v5"
 	"github.com/navidrome/navidrome/core/artwork"
-	"github.com/navidrome/navidrome/core/ffmpeg"
 	"github.com/navidrome/navidrome/core/playlists"
+	"github.com/navidrome/navidrome/core/storage"
 	"github.com/navidrome/navidrome/db"
 	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/model/id"
+	"github.com/navidrome/navidrome/model/metadata"
 	"github.com/navidrome/navidrome/model/request"
 	"github.com/navidrome/navidrome/persistence"
 	"github.com/navidrome/navidrome/scanner"
+	"go.senan.xyz/taglib"
 )
 
 var siteMetadataMu sync.Mutex
+
+var editableRoles = []model.Role{model.RoleComposer, model.RoleConductor, model.RoleLyricist, model.RoleArranger, model.RoleProducer, model.RoleDirector, model.RoleEngineer, model.RoleMixer, model.RoleRemixer, model.RoleDJMixer, model.RolePerformer}
+
+func editableMetadataField(kind, field string) bool {
+	if kind == "song" && slices.ContainsFunc(editableRoles, func(role model.Role) bool { return role.String() == field }) {
+		return true
+	}
+	return slices.Contains(model.MetadataFields(kind), field) && !slices.Contains([]string{"artistId", "albumArtistId", "participants"}, field)
+}
+
+func (s *Server) metadataArtists(w http.ResponseWriter, r *http.Request) {
+	user, _ := request.UserFrom(r.Context())
+	if !user.IsAdmin {
+		siteError(w, 403, "需要管理员权限")
+		return
+	}
+	term := strings.TrimSpace(r.URL.Query().Get("q"))
+	if term == "" || len(term) > 400 {
+		siteError(w, 400, "歌手搜索无效")
+		return
+	}
+	artists, err := s.ds.Artist(r.Context()).Search(term, model.QueryOptions{Max: 18})
+	if err != nil {
+		siteError(w, 500, "搜索歌手失败")
+		return
+	}
+	results := make([]map[string]string, 0, len(artists))
+	for _, artist := range artists {
+		results = append(results, map[string]string{"id": artist.ID, "name": artist.Name})
+	}
+	_ = json.NewEncoder(w).Encode(results)
+}
 
 func (s *Server) metadataTracks(ctx context.Context, kind, itemID string) (model.MediaFiles, error) {
 	if kind == "song" {
@@ -89,11 +123,33 @@ func (s *Server) getMetadata(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			files := make([]string, 0, len(tracks))
+			var unsupported []string
 			for _, song := range tracks {
 				files = append(files, song.Path)
+				if !tagWritable(song.Path) {
+					unsupported = append(unsupported, song.Path)
+				}
 			}
 			slices.Sort(files)
 			result["files"] = files
+			result["unsupportedFiles"] = unsupported
+			fileValues := maps.Clone(source)
+			if album, ok := item.(*model.Album); ok {
+				if album.MinYear > 0 && album.MinYear == album.MaxYear {
+					fileValues["fileYear"], _ = json.Marshal(album.MinYear)
+				}
+				if source["minYear"] != nil && string(source["minYear"]) == string(source["maxYear"]) {
+					fileValues["fileYear"] = source["minYear"]
+				}
+			}
+			switch value := item.(type) {
+			case *model.MediaFile:
+				fileValues["compilation"], _ = json.Marshal(value.Compilation)
+				fileValues["genre"], _ = json.Marshal(value.Genre)
+			case *model.Album:
+				fileValues["compilation"], _ = json.Marshal(value.Compilation)
+			}
+			result["fileValues"] = fileValues
 		}
 		var pinned bool
 		if err := db.Db().QueryRowContext(r.Context(), "SELECT EXISTS(SELECT 1 FROM site_artwork WHERE kind=? AND item_id=?)", coverKind(kind).Prefix(), id).Scan(&pinned); err != nil {
@@ -140,11 +196,17 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	for field, value := range input.Fields {
 		_, fileField := model.FileTagFields(kind)[field]
-		if (input.Mode == "edit" && !fileField) || (input.Mode == "override" && (!slices.Contains(model.MetadataFields(kind), field) || slices.Contains([]string{"artistId", "albumArtistId", "participants"}, field))) || string(value) == "null" {
+		if (input.Mode == "edit" && !fileField) || (input.Mode == "override" && !editableMetadataField(kind, field)) || string(value) == "null" {
 			siteError(w, 400, "字段无效："+field)
 			return
 		}
-		if slices.Contains([]string{"year", "minYear", "maxYear", "fileYear", "trackNumber", "discNumber"}, field) {
+		if field == "compilation" {
+			var enabled bool
+			if json.Unmarshal(value, &enabled) != nil {
+				siteError(w, 400, "合辑标记无效")
+				return
+			}
+		} else if slices.Contains([]string{"year", "minYear", "maxYear", "fileYear", "trackNumber", "discNumber"}, field) {
 			var number int
 			if json.Unmarshal(value, &number) != nil || number < 0 || number > 9999 {
 				siteError(w, 400, "编号或年份超出范围："+field)
@@ -152,20 +214,20 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			var text string
-			if json.Unmarshal(value, &text) != nil || strings.ContainsRune(text, 0) || ((field == "title" || field == "name") && strings.TrimSpace(text) == "") {
+			if json.Unmarshal(value, &text) != nil || strings.ContainsAny(text, "\x00\v") || ((field == "title" || field == "name") && strings.TrimSpace(text) == "") {
 				siteError(w, 400, "字段内容无效："+field)
 				return
 			}
 		}
 	}
 	for _, field := range input.Restore {
-		if input.Mode != "override" || !slices.Contains(model.MetadataFields(kind), field) || slices.Contains([]string{"artistId", "albumArtistId", "participants"}, field) {
+		if input.Mode != "override" || !editableMetadataField(kind, field) || input.Fields[field] != nil {
 			siteError(w, 400, "恢复字段无效："+field)
 			return
 		}
 	}
 	for field := range input.Artists {
-		if input.Mode != "override" || (field != "artist" && field != "albumArtist") || !slices.Contains(model.MetadataFields(kind), field) || input.Fields[field] == nil {
+		if input.Mode != "override" || (field != "artist" && field != "albumArtist" && !slices.ContainsFunc(editableRoles, func(role model.Role) bool { return role.String() == field })) || !editableMetadataField(kind, field) || input.Fields[field] == nil {
 			siteError(w, 400, "歌手选择无效")
 			return
 		}
@@ -231,7 +293,7 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceData, _ := json.Marshal(source)
 	overrideData, _ := json.Marshal(overrides)
-	if err = json.Unmarshal(sourceData, item); err != nil {
+	if err = model.ApplyMetadataValues(sourceData, item); err != nil {
 		siteError(w, 400, "字段类型无效")
 		return
 	}
@@ -244,11 +306,14 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 		merged[k] = v
 	}
 	mergedData, _ := json.Marshal(merged)
-	if err = json.Unmarshal(mergedData, item); err != nil {
+	if err = model.ApplyMetadataValues(mergedData, item); err != nil {
 		siteError(w, 400, "字段类型无效")
 		return
 	}
-	_ = json.Unmarshal(sourceData, item)
+	if err = model.ApplyMetadataValues(sourceData, item); err != nil {
+		siteError(w, 400, "字段类型无效")
+		return
+	}
 	if input.Mode == "edit" {
 		if len(input.Fields) == 0 {
 			siteError(w, 400, "请选择要写入的标签")
@@ -259,18 +324,76 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 		if kind == "album" {
 			fromAlbum = itemID
 			originalSongs, err = s.metadataTracks(r.Context(), kind, itemID)
-		} else if input.Fields["album"] != nil || input.Fields["albumArtist"] != nil {
+		} else if input.Fields["album"] != nil || input.Fields["albumArtist"] != nil || input.Fields["compilation"] != nil {
 			fromAlbum = item.(*model.MediaFile).AlbumID
 			originalSongs, err = s.metadataTracks(r.Context(), "album", fromAlbum)
 			if len(originalSongs) != 1 {
 				originalSongs = nil
 			}
 		}
+		if kind == "song" && (input.Fields["album"] != nil || input.Fields["albumArtist"] != nil) && fromAlbum != "" && len(originalSongs) != 1 {
+			var albumOverrides string
+			err := db.Db().QueryRowContext(r.Context(), `SELECT overrides FROM site_metadata WHERE kind='album' AND item_id=?`, fromAlbum).Scan(&albumOverrides)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				siteError(w, 500, "读取专辑覆写失败")
+				return
+			}
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal([]byte(albumOverrides), &fields)
+			if (input.Fields["album"] != nil && fields["name"] != nil) || (input.Fields["albumArtist"] != nil && fields["albumArtist"] != nil) {
+				siteError(w, 409, "专辑存在同字段的覆写，请在专辑编辑器中写入文件或先恢复专辑覆写")
+				return
+			}
+		}
 		if err != nil {
 			siteError(w, 500, "读取专辑曲目失败")
 			return
 		}
-		targets, err := s.editFileTags(r.Context(), kind, itemID, input.Fields, input.Files)
+		fileFields := slices.Collect(maps.Keys(input.Fields))
+		if _, ok := input.Fields["artist"]; ok {
+			fileFields = append(fileFields, "artistId", "participants.artist")
+		}
+		if _, ok := input.Fields["albumArtist"]; ok {
+			fileFields = append(fileFields, "albumArtistId", "participants.albumartist")
+		}
+		if _, ok := input.Fields["fileYear"]; ok {
+			fileFields = append(fileFields, "minYear", "maxYear")
+		}
+		targets, err := s.editFileTags(r.Context(), kind, itemID, input.Fields, input.Files, func(songs model.MediaFiles) error {
+			ctx := context.WithoutCancel(r.Context())
+			return s.ds.WithTx(func(tx model.DataStore) error {
+				if err := persistence.ClearFileMetadataOverrides(ctx, tx, kind, itemID, fileFields); err != nil {
+					return err
+				}
+				if kind == "song" && len(originalSongs) == 1 {
+					var albumFields []string
+					if input.Fields["album"] != nil {
+						albumFields = append(albumFields, "name")
+					}
+					if input.Fields["albumArtist"] != nil {
+						albumFields = append(albumFields, "albumArtist", "albumArtistId", "participants.albumartist")
+					}
+					if err := persistence.ClearFileMetadataOverrides(ctx, tx, "album", fromAlbum, albumFields); err != nil {
+						return err
+					}
+				}
+				if kind == "album" {
+					trackFields := slices.Clone(fileFields)
+					if input.Fields["name"] != nil {
+						trackFields = append(trackFields, "album")
+					}
+					if input.Fields["fileYear"] != nil {
+						trackFields = append(trackFields, "year")
+					}
+					for _, song := range songs {
+						if err := persistence.ClearFileMetadataOverrides(ctx, tx, "song", song.ID, trackFields); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			})
+		})
 		if err != nil {
 			siteError(w, 422, err.Error())
 			return
@@ -298,7 +421,7 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	modified := time.Now().UTC()
 	err = s.ds.WithTx(func(tx model.DataStore) error {
-		if e := resolveMetadataArtists(r.Context(), tx, kind, source, overrides, input.Fields, input.Artists); e != nil {
+		if e := resolveMetadataArtists(r.Context(), tx, kind, overrides, input.Fields, input.Artists); e != nil {
 			return e
 		}
 		overrideData, _ = json.Marshal(overrides)
@@ -330,6 +453,11 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 				if e = persistence.RestoreMetadataSource(r.Context(), tx, "song", song.ID, &song); e != nil {
 					return e
 				}
+				if slices.Contains(input.Restore, "name") || slices.Contains(input.Restore, "albumArtist") {
+					if e = restoreTrackAlbumTags(&song); e != nil {
+						return e
+					}
+				}
 				song.UpdatedAt = modified
 				if e = tx.MediaFile(r.Context()).Put(&song); e != nil {
 					return e
@@ -353,13 +481,8 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 				if e = persistence.RestoreMetadataSource(r.Context(), tx, "song", song.ID, &song); e != nil {
 					return e
 				}
-				for role, list := range song.Participants {
-					for i := range list {
-						if list[i].ID == itemID {
-							list[i].Name = v.Name
-						}
-					}
-					song.Participants[role] = list
+				if slices.Contains(input.Restore, "name") {
+					restoreCreditName(song.Participants, itemID, v.Name)
 				}
 				song.UpdatedAt = modified
 				if e = tx.MediaFile(r.Context()).Put(&song); e != nil {
@@ -374,13 +497,8 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 				if e = persistence.RestoreMetadataSource(r.Context(), tx, "album", album.ID, &album); e != nil {
 					return e
 				}
-				for role, list := range album.Participants {
-					for i := range list {
-						if list[i].ID == itemID {
-							list[i].Name = v.Name
-						}
-					}
-					album.Participants[role] = list
+				if slices.Contains(input.Restore, "name") {
+					restoreCreditName(album.Participants, itemID, v.Name)
 				}
 				album.UpdatedAt = modified
 				if e = tx.Album(r.Context()).Put(&album); e != nil {
@@ -397,6 +515,46 @@ func (s *Server) saveMetadata(w http.ResponseWriter, r *http.Request) {
 	s.getMetadata(w, r)
 }
 
+func restoreCreditName(credits model.Participants, artistID, name string) {
+	for _, list := range credits {
+		for index := range list {
+			if list[index].ID == artistID {
+				list[index].Name = name
+			}
+		}
+	}
+}
+
+func restoreTrackAlbumTags(song *model.MediaFile) error {
+	store, err := storage.For(song.LibraryPath)
+	if err != nil {
+		return err
+	}
+	fs, err := store.FS()
+	if err != nil {
+		return err
+	}
+	tags, err := fs.ReadTags(song.Path)
+	if err != nil {
+		return err
+	}
+	info, ok := tags[song.Path]
+	if !ok {
+		return fmt.Errorf("无法读取曲目原始标签：%s", song.Path)
+	}
+	base := metadata.New(song.Path, info).ToMediaFile(song.LibraryID, song.FolderID)
+	song.Album, song.AlbumArtist, song.AlbumArtistID = base.Album, base.AlbumArtist, base.AlbumArtistID
+	song.OrderAlbumName, song.OrderAlbumArtistName = base.OrderAlbumName, base.OrderAlbumArtistName
+	if song.Participants == nil {
+		song.Participants = model.Participants{}
+	}
+	delete(song.Participants, model.RoleAlbumArtist)
+	if list, ok := base.Participants[model.RoleAlbumArtist]; ok {
+		song.Participants[model.RoleAlbumArtist] = list
+	}
+	return nil
+}
+
 func (s *Server) reconcileEditedAlbum(ctx context.Context, from string, original model.MediaFiles) error {
 	return s.ds.WithTx(func(tx model.DataStore) error {
 		track, err := tx.MediaFile(ctx).Get(original[0].ID)
@@ -405,15 +563,15 @@ func (s *Server) reconcileEditedAlbum(ctx context.Context, from string, original
 		}
 		to := track.AlbumID
 		tracks, err := tx.MediaFile(ctx).GetAll(model.QueryOptions{Filters: Eq{"album_id": to}})
-		if err != nil || len(tracks) != len(original) {
+		if err != nil {
 			return err
 		}
-		ids := make(map[string]bool, len(original))
-		for _, song := range original {
+		ids := make(map[string]bool, len(tracks))
+		for _, song := range tracks {
 			ids[song.ID] = true
 		}
-		if slices.ContainsFunc(tracks, func(song model.MediaFile) bool { return !ids[song.ID] }) {
-			return nil
+		if slices.ContainsFunc(original, func(song model.MediaFile) bool { return !ids[song.ID] }) {
+			return fmt.Errorf("原专辑已拆分，请在各目标专辑中核对资料")
 		}
 		moved, err := persistence.MoveSiteAlbumIfNeeded(ctx, tx, from, to)
 		if err != nil || !moved {
@@ -424,6 +582,9 @@ func (s *Server) reconcileEditedAlbum(ctx context.Context, from string, original
 			return err
 		}
 		if err = tx.Album(ctx).Put(album); err != nil {
+			return err
+		}
+		if err = tx.Album(ctx).ReassignAnnotation(from, to); err != nil {
 			return err
 		}
 		for _, song := range tracks {
@@ -438,21 +599,26 @@ func (s *Server) reconcileEditedAlbum(ctx context.Context, from string, original
 	})
 }
 
-func resolveMetadataArtists(ctx context.Context, tx model.DataStore, kind string, source, overrides, changed map[string]json.RawMessage, selected map[string][]string) error {
+func resolveMetadataArtists(ctx context.Context, tx model.DataStore, kind string, overrides, changed map[string]json.RawMessage, selected map[string][]string) error {
 	if kind == "artist" {
 		return nil
 	}
-	var base, previous model.Participants
-	_ = json.Unmarshal(source["participants"], &base)
+	base := model.Participants{}
+	var previous model.Participants
 	_ = json.Unmarshal(overrides["participants"], &previous)
-	if base == nil {
-		base = model.Participants{}
-	}
 	active := false
-	for _, entry := range []struct {
+	type roleField struct {
 		Field, ID string
 		Role      model.Role
-	}{{"artist", "artistId", model.RoleArtist}, {"albumArtist", "albumArtistId", model.RoleAlbumArtist}} {
+	}
+	roleFields := []roleField{{"artist", "artistId", model.RoleArtist}, {"albumArtist", "albumArtistId", model.RoleAlbumArtist}}
+	if kind == "song" {
+		for _, role := range editableRoles {
+			roleFields = append(roleFields, roleField{Field: role.String(), Role: role})
+		}
+	}
+	created := map[string]model.Artist{}
+	for _, entry := range roleFields {
 		if overrides[entry.Field] == nil {
 			continue
 		}
@@ -462,6 +628,7 @@ func resolveMetadataArtists(ctx context.Context, tx model.DataStore, kind string
 			continue
 		}
 		delete(base, entry.Role)
+		base[entry.Role] = model.ParticipantList{}
 		var names string
 		_ = json.Unmarshal(changed[entry.Field], &names)
 		if artistIDs, ok := selected[entry.Field]; ok {
@@ -471,16 +638,13 @@ func resolveMetadataArtists(ctx context.Context, tx model.DataStore, kind string
 					if name == "" || len(name) > 400 || strings.ContainsAny(name, "\x00;\r\n") {
 						return fmt.Errorf("新歌手名称无效")
 					}
-					existing, err := tx.Artist(ctx).GetAll(model.QueryOptions{Filters: Eq{"name": name}, Max: 1})
-					if err != nil {
-						return err
-					}
-					if len(existing) != 0 {
-						return fmt.Errorf("同名歌手已存在，请重新搜索并选择：%s", name)
-					}
-					artist := model.Artist{ID: id.NewRandom(), Name: name, OrderArtistName: strings.ToLower(name)}
-					if err := tx.Artist(ctx).Put(&artist); err != nil {
-						return err
+					artist, ok := created[name]
+					if !ok {
+						artist = model.Artist{ID: id.NewRandom(), Name: name, OrderArtistName: strings.ToLower(name)}
+						if err := tx.Artist(ctx).Put(&artist); err != nil {
+							return err
+						}
+						created[name] = artist
 					}
 					base.Add(entry.Role, artist)
 					continue
@@ -512,7 +676,9 @@ func resolveMetadataArtists(ctx context.Context, tx model.DataStore, kind string
 			values = append(values, artist.Name)
 		}
 		overrides[entry.Field], _ = json.Marshal(strings.Join(values, "; "))
-		overrides[entry.ID], _ = json.Marshal(base.First(entry.Role).ID)
+		if entry.ID != "" {
+			overrides[entry.ID], _ = json.Marshal(base.First(entry.Role).ID)
+		}
 	}
 	if active {
 		overrides["participants"], _ = json.Marshal(base)
@@ -524,14 +690,15 @@ func resolveMetadataArtists(ctx context.Context, tx model.DataStore, kind string
 
 type tagReplacement struct {
 	path, output, backup string
+	label                string
 	info                 os.FileInfo
 }
 
-func (s *Server) editFileTags(ctx context.Context, kind, itemID string, fields map[string]json.RawMessage, confirmedPaths []string) ([]model.ScanTarget, error) {
-	command, err := ffmpeg.New().CmdPath()
-	if err != nil {
-		return nil, fmt.Errorf("无法读取 FFmpeg：%w", err)
-	}
+func tagWritable(path string) bool {
+	return slices.Contains([]string{".mp3", ".flac", ".m4a", ".ogg", ".oga", ".opus", ".wv", ".ape", ".wav", ".aiff", ".aif"}, strings.ToLower(filepath.Ext(path)))
+}
+
+func (s *Server) editFileTags(ctx context.Context, kind, itemID string, fields map[string]json.RawMessage, confirmedPaths []string, commit func(model.MediaFiles) error) ([]model.ScanTarget, error) {
 	songs, err := s.metadataTracks(ctx, kind, itemID)
 	if err != nil || len(songs) == 0 {
 		return nil, fmt.Errorf("没有可编辑的曲目文件")
@@ -570,38 +737,84 @@ func (s *Server) editFileTags(ctx context.Context, kind, itemID string, fields m
 		if err != nil || !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("曲目文件不可写入：%s", song.Path)
 		}
-		if !slices.Contains([]string{".mp3", ".flac", ".m4a", ".ogg", ".opus"}, strings.ToLower(filepath.Ext(path))) {
+		if !tagWritable(path) {
 			return nil, fmt.Errorf("该文件格式使用本站覆写：%s", song.Path)
 		}
-		file, err := os.CreateTemp(filepath.Dir(path), ".ndfork-edit-*"+filepath.Ext(path))
+		replacements = append(replacements, tagReplacement{path: path, label: song.Path, info: info})
+		targets[model.ScanTarget{LibraryID: song.LibraryID, FolderPath: filepath.Dir(song.Path)}] = true
+	}
+	for index := range replacements {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item := &replacements[index]
+		ext := strings.ToLower(filepath.Ext(item.path))
+		file, err := os.CreateTemp(filepath.Dir(item.path), ".ndfork-edit-*"+ext)
 		if err != nil {
 			return nil, err
 		}
 		temp := file.Name()
-		_ = file.Close()
-		replacements = append(replacements, tagReplacement{path: path, output: temp, backup: temp + ".original", info: info})
-		args := []string{"-nostdin", "-v", "error", "-y", "-i", path, "-map", "0", "-c", "copy", "-map_metadata", "0"}
-		for _, field := range slices.Sorted(maps.Keys(fields)) {
+		item.output, item.backup = temp, temp+".original"
+		original, err := os.Open(item.path)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		_, err = io.Copy(file, original)
+		if err = errors.Join(err, original.Close(), file.Close()); err != nil {
+			return nil, err
+		}
+		tags := map[string][]string{}
+		for field, raw := range fields {
 			var text string
-			if json.Unmarshal(fields[field], &text) != nil {
-				text = string(fields[field])
-				if text == "0" {
+			if json.Unmarshal(raw, &text) != nil {
+				text = string(raw)
+				if field == "compilation" {
+					if text == "true" {
+						text = "1"
+					} else {
+						text = "0"
+					}
+				} else if text == "0" {
 					text = ""
 				}
 			}
-			args = append(args, "-metadata", model.FileTagFields(kind)[field]+"="+text)
+			key := model.FileTagFields(kind)[field]
+			tags[key] = nil
+			if text != "" {
+				if field == "artist" || field == "albumArtist" || field == "genre" {
+					for part := range strings.SplitSeq(text, ";") {
+						if part = strings.TrimSpace(part); part != "" {
+							tags[key] = append(tags[key], part)
+						}
+					}
+				} else {
+					tags[key] = []string{strings.ReplaceAll(text, "\r\n", "\n")}
+				}
+			}
 		}
-		args = append(args, temp)
-		commandCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		output, commandErr := exec.CommandContext(commandCtx, command, args...).CombinedOutput()
-		cancel()
-		if commandErr != nil {
-			return nil, fmt.Errorf("准备文件失败（%s）：%w %s", song.Path, commandErr, strings.TrimSpace(string(output)))
+		if err := taglib.WriteTags(temp, tags, 0); err != nil {
+			return nil, fmt.Errorf("写入标签失败（%s）：%w", item.label, err)
 		}
-		if err := os.Chmod(temp, info.Mode().Perm()); err != nil {
+		check, err := taglib.OpenReadOnly(temp, taglib.WithReadStyle(taglib.ReadStyleFast))
+		if err != nil {
+			return nil, fmt.Errorf("无法回读标签（%s）：%w", item.label, err)
+		}
+		actual := check.Tags()
+		if err = check.Close(); err != nil {
 			return nil, err
 		}
-		targets[model.ScanTarget{LibraryID: song.LibraryID, FolderPath: filepath.Dir(song.Path)}] = true
+		if actual == nil {
+			return nil, fmt.Errorf("无法验证写入的标签：%s", item.label)
+		}
+		for key, expected := range tags {
+			if !slices.Equal(actual[key], expected) {
+				return nil, fmt.Errorf("当前格式无法保存标签 %s：%s", key, item.label)
+			}
+		}
+		if err := os.Chmod(temp, item.info.Mode().Perm()); err != nil {
+			return nil, err
+		}
 	}
 	for _, file := range replacements {
 		info, err := os.Stat(file.path)
@@ -628,6 +841,9 @@ func (s *Server) editFileTags(ctx context.Context, kind, itemID string, fields m
 		if err := os.Rename(file.output, file.path); err != nil {
 			return nil, rollback(index, err)
 		}
+	}
+	if err := commit(songs); err != nil {
+		return nil, rollback(len(replacements)-1, err)
 	}
 	for _, file := range replacements {
 		_ = os.Remove(file.backup)

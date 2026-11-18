@@ -8,10 +8,11 @@ import { isRoomActive } from './room';
 import { siteApi } from './site-api';
 
 import { api } from '/@/renderer/api';
-import { searchQueries } from '/@/renderer/features/search/api/search-api';
+import { usePlayer } from '/@/renderer/features/player/context/player-context';
 import { useAuthStore } from '/@/renderer/store';
 import { usePlayerStoreBase } from '/@/renderer/store/player.store';
 import { Button } from '/@/shared/components/button/button';
+import { Checkbox } from '/@/shared/components/checkbox/checkbox';
 import { Group } from '/@/shared/components/group/group';
 import { Modal } from '/@/shared/components/modal/modal';
 import { MultiSelect } from '/@/shared/components/multi-select/multi-select';
@@ -21,6 +22,7 @@ import { TextInput } from '/@/shared/components/text-input/text-input';
 import { Text } from '/@/shared/components/text/text';
 import { Textarea } from '/@/shared/components/textarea/textarea';
 import { useDebouncedValue } from '/@/shared/hooks/use-debounced-value';
+import { Song } from '/@/shared/types/domain-types';
 
 type Fields = Record<string, unknown>;
 type Lyric = { kind?: string; lang: string; line: LyricLine[]; synced: boolean };
@@ -30,17 +32,176 @@ type Metadata = {
     fields: string[];
     fileFields?: string[];
     files?: string[];
+    fileValues?: Fields;
     overrides: Fields;
     revision: string;
     source: Fields;
+    unsupportedFiles?: string[];
 };
 type Mode = 'edit' | 'override';
 type Selection = { id: string; name: string };
 const numeric = new Set(['discNumber', 'fileYear', 'maxYear', 'minYear', 'trackNumber', 'year']);
-const artistRoles: Record<string, string> = { albumArtist: 'albumartist', artist: 'artist' };
+const extendedRoles = [
+    'composer',
+    'conductor',
+    'lyricist',
+    'arranger',
+    'producer',
+    'director',
+    'engineer',
+    'mixer',
+    'remixer',
+    'djmixer',
+    'performer',
+];
+const artistRoles: Record<string, string> = {
+    albumArtist: 'albumartist',
+    artist: 'artist',
+    ...Object.fromEntries(extendedRoles.map((role) => [role, role])),
+};
 
 const display = (value: unknown) =>
     value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
+
+export function BatchMetadataEditor({ songs }: { songs: Song[] }) {
+    const { t } = useTranslation();
+    const client = useQueryClient();
+    const server = useAuthStore((state) => state.currentServer);
+    const [fields, setFields] = useState<Record<string, string>>({});
+    const [selected, setSelected] = useState<Selection[]>([]);
+    const [busy, setBusy] = useState(false);
+    const [done, setDone] = useState<string[]>([]);
+    const [errors, setErrors] = useState<string[]>([]);
+    const save = async () => {
+        if (!server?.isAdmin || busy) return;
+        if (fields.year !== undefined && !/^\d{0,4}$/.test(fields.year)) {
+            setErrors([t('metadataEditor.number', { field: t('site.field.year') })]);
+            return;
+        }
+        setBusy(true);
+        const successful = [...done];
+        const failed: string[] = [];
+        const value = Object.fromEntries(
+            Object.entries(fields).map(([field, text]) => [
+                field,
+                numeric.has(field) ? Number(text) : text,
+            ]),
+        );
+        try {
+            const remaining = songs.filter((song) => !done.includes(song.id));
+            const revisions = await Promise.all(
+                remaining.map(async (song) => {
+                    const path = `/site/metadata/song/${encodeURIComponent(song.id)}`;
+                    try {
+                        return {
+                            path,
+                            revision: (await siteApi.request<Metadata>(path)).revision,
+                            song,
+                        };
+                    } catch (error) {
+                        failed.push(`${song.name}: ${(error as Error).message}`);
+                        return undefined;
+                    }
+                }),
+            );
+            for (const item of revisions) {
+                if (!item) continue;
+                try {
+                    await siteApi.request(
+                        item.path,
+                        {
+                            artists:
+                                fields.albumArtist === undefined
+                                    ? {}
+                                    : { albumArtist: selected.map((artist) => artist.id) },
+                            fields: value,
+                            mode: 'override',
+                            revision: item.revision,
+                        },
+                        'PUT',
+                    );
+                    successful.push(item.song.id);
+                } catch (error) {
+                    failed.push(`${item.song.name}: ${(error as Error).message}`);
+                }
+            }
+            setDone(successful);
+            setErrors(failed);
+            await client.invalidateQueries();
+        } finally {
+            setBusy(false);
+        }
+    };
+    return (
+        <Stack gap="sm">
+            <Text size="sm">{t('metadataEditor.batch', { count: songs.length })}</Text>
+            {(['album', 'year', 'albumArtist', 'comment'] as const).map((field) => (
+                <Stack gap={4} key={field}>
+                    <Checkbox
+                        checked={Object.hasOwn(fields, field)}
+                        disabled={busy || done.length > 0}
+                        label={t(`site.field.${field}`)}
+                        onChange={(event) => {
+                            if (event.currentTarget.checked)
+                                setFields((previous) => ({ ...previous, [field]: '' }));
+                            else
+                                setFields((previous) =>
+                                    Object.fromEntries(
+                                        Object.entries(previous).filter(([key]) => key !== field),
+                                    ),
+                                );
+                        }}
+                    />
+                    {Object.hasOwn(fields, field) &&
+                        (field === 'albumArtist' ? (
+                            <ArtistField
+                                disabled={busy || done.length > 0}
+                                label={t('site.field.albumArtist')}
+                                onChange={(artists) => {
+                                    setSelected(artists);
+                                    setFields((previous) => ({
+                                        ...previous,
+                                        albumArtist: artists
+                                            .map((artist) => artist.name)
+                                            .join('; '),
+                                    }));
+                                }}
+                                serverId={server?.id ?? ''}
+                                value={selected}
+                            />
+                        ) : (
+                            <TextInput
+                                aria-label={t(`site.field.${field}`)}
+                                disabled={busy || done.length > 0}
+                                onChange={(event) => {
+                                    const text = event.currentTarget.value;
+                                    setFields((previous) => ({ ...previous, [field]: text }));
+                                }}
+                                value={fields[field]}
+                            />
+                        ))}
+                </Stack>
+            ))}
+            {done.length > 0 && (
+                <Text role="status" size="sm">
+                    {t('metadataEditor.batchSaved', { count: done.length })}
+                </Text>
+            )}
+            {errors.map((error, index) => (
+                <Text c="red" key={`${index}:${error}`} role="alert" size="sm">
+                    {error}
+                </Text>
+            ))}
+            <Button
+                disabled={!Object.keys(fields).length || done.length === songs.length}
+                loading={busy}
+                onClick={() => void save()}
+            >
+                {t('site.save')}
+            </Button>
+        </Stack>
+    );
+}
 
 export function MetadataEditor(props: { id: string; kind: EntityKind }) {
     const server = useAuthStore((state) => state.currentServer);
@@ -64,15 +225,16 @@ function ArtistField({
     const { t } = useTranslation();
     const [search, setSearch] = useState('');
     const [term] = useDebouncedValue(search.trim(), 250);
-    const results = useQuery(
-        searchQueries.search({
-            options: { enabled: Boolean(term) },
-            query: { albumArtistLimit: 18, albumLimit: 0, query: term, songLimit: 0 },
-            serverId,
-        }),
-    );
+    const results = useQuery({
+        enabled: Boolean(term),
+        queryFn: () =>
+            siteApi.request<Selection[]>(
+                `/site/metadata-artists?q=${encodeURIComponent(term ?? '')}`,
+            ),
+        queryKey: [serverId, 'site', 'metadata-artists', term],
+    });
     const choices = new Map(value.map((artist) => [artist.id, artist.name]));
-    for (const artist of results.data?.albumArtists ?? []) choices.set(artist.id, artist.name);
+    for (const artist of results.data ?? []) choices.set(artist.id, artist.name);
     const matches = [...choices.values()];
     const options = [...choices].map(([id, name]) => ({
         label:
@@ -81,12 +243,7 @@ function ArtistField({
                 : name,
         value: id,
     }));
-    if (
-        term &&
-        !results.isFetching &&
-        !results.isError &&
-        !matches.some((name) => name.toLocaleLowerCase() === term.toLocaleLowerCase())
-    ) {
+    if (term && !results.isFetching && !results.isError && !choices.has(`new:${term}`)) {
         options.push({
             label: t('metadataEditor.createArtist', { name: term }),
             value: `new:${term}`,
@@ -123,6 +280,7 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
         override: {},
     });
     const [artists, setArtists] = useState<Record<string, Selection[]>>({});
+    const [restoreField, setRestoreField] = useState<string>();
     const [busy, setBusy] = useState(false);
     const [feedback, setFeedback] = useState<{ error: boolean; text: string }>();
     const [confirm, setConfirm] = useState<'cover' | 'files' | 'restoreCover'>();
@@ -133,7 +291,27 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
     const key = ['site', 'metadata', server.id, server.userId, kind, id];
     const query = useQuery({ queryFn: () => siteApi.request<Metadata>(path), queryKey: key });
     const data = query.data;
-    const draft = drafts[mode];
+    const values =
+        mode === 'override'
+            ? { ...data?.source, ...data?.overrides }
+            : (data?.fileValues ?? data?.source ?? {});
+    const participantMap = {
+        ...(data?.source.participants as Record<string, Selection[]> | undefined),
+        ...(data?.overrides.participants as Record<string, Selection[]> | undefined),
+    };
+    const draft = Object.fromEntries(
+        Object.entries(drafts[mode]).filter(([field, value]) => {
+            if (mode === 'override' && artists[field]) {
+                return (
+                    artists[field].map((artist) => artist.id).join(';') !==
+                    (participantMap?.[artistRoles[field]] ?? [])
+                        .map((artist) => artist.id)
+                        .join(';')
+                );
+            }
+            return value !== display(values[field]);
+        }),
+    );
     const change = (field: string, value: string) =>
         setDrafts((previous) => ({ ...previous, [mode]: { ...previous[mode], [field]: value } }));
     const fieldLabel = (field: string) =>
@@ -166,9 +344,16 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
         void update(async () => {
             const fields: Fields = {};
             for (const [field, value] of Object.entries(restore.length ? {} : draft)) {
-                if (numeric.has(field) && !/^\d{0,4}$/.test(value))
+                if (
+                    numeric.has(field) &&
+                    (!/^\d{0,4}$/.test(value) || (field === 'fileYear' && !value))
+                )
                     throw new Error(t('metadataEditor.number', { field: fieldLabel(field) }));
-                fields[field] = numeric.has(field) ? Number(value) : value;
+                fields[field] = numeric.has(field)
+                    ? Number(value)
+                    : field === 'compilation'
+                      ? value === 'true'
+                      : value;
             }
             const chosen = Object.fromEntries(
                 Object.entries(artists)
@@ -207,6 +392,7 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                       : previous,
             );
             setConfirm(undefined);
+            setRestoreField(undefined);
             return result?.scanWarning;
         });
 
@@ -246,11 +432,10 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                 </Button>
             </Group>
         );
-    const values = mode === 'override' ? { ...data.source, ...data.overrides } : data.source;
     const fields =
         mode === 'edit'
             ? (data.fileFields ?? [])
-            : data.fields.filter(
+            : [...data.fields, ...(kind === 'song' ? extendedRoles : [])].filter(
                   (field) => !['albumArtistId', 'artistId', 'participants'].includes(field),
               );
     return (
@@ -275,9 +460,14 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                     count: data.files?.length ?? 0,
                 })}
             </Text>
+            {mode === 'edit' && Boolean(data.unsupportedFiles?.length) && (
+                <Text c="red" role="alert" size="sm">
+                    {t('metadataEditor.unsupportedFiles')}: {data.unsupportedFiles?.join(' · ')}
+                </Text>
+            )}
             {fields.map((field) => {
                 const label = fieldLabel(field);
-                const value = draft[field] ?? display(values[field]);
+                const value = drafts[mode][field] ?? display(values[field]);
                 const props = {
                     disabled: busy,
                     label,
@@ -285,9 +475,6 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                         change(field, event.currentTarget.value),
                     value,
                 };
-                const participantMap = values.participants as
-                    | Record<string, Selection[]>
-                    | undefined;
                 return (
                     <Stack gap={4} key={field}>
                         {mode === 'override' && artistRoles[field] ? (
@@ -304,7 +491,30 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                                 serverId={server.id}
                                 value={artists[field] ?? participantMap?.[artistRoles[field]] ?? []}
                             />
-                        ) : field === 'lyrics' ? (
+                        ) : mode === 'edit' && (field === 'artist' || field === 'albumArtist') ? (
+                            <ArtistField
+                                disabled={busy}
+                                label={`${label} · ${t('metadataEditor.artistSeparator')}`}
+                                onChange={(selection) =>
+                                    change(field, selection.map((artist) => artist.name).join('; '))
+                                }
+                                serverId={server.id}
+                                value={value
+                                    .split(/;| \/ /)
+                                    .map((name) => name.trim())
+                                    .filter(Boolean)
+                                    .map((name) => ({ id: `new:${name}`, name }))}
+                            />
+                        ) : field === 'compilation' ? (
+                            <Checkbox
+                                checked={value === 'true'}
+                                disabled={busy}
+                                label={label}
+                                onChange={(event) =>
+                                    change(field, String(event.currentTarget.checked))
+                                }
+                            />
+                        ) : field === 'lyrics' && mode === 'override' ? (
                             <LyricsField
                                 disabled={busy}
                                 id={id}
@@ -313,7 +523,7 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                                 serverId={server.id}
                                 value={value}
                             />
-                        ) : ['biography', 'comment', 'description'].includes(field) ? (
+                        ) : ['biography', 'comment', 'description', 'lyrics'].includes(field) ? (
                             <Textarea {...props} autosize maxRows={6} minRows={2} />
                         ) : (
                             <TextInput
@@ -331,7 +541,7 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                                 </Text>
                                 <Button
                                     disabled={busy}
-                                    onClick={() => save([field])}
+                                    onClick={() => setRestoreField(field)}
                                     size="compact-xs"
                                     variant="subtle"
                                 >
@@ -344,7 +554,9 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
             })}
             <Button
                 disabled={
-                    busy || !Object.keys(draft).length || (mode === 'edit' && !data.files?.length)
+                    busy ||
+                    !Object.keys(draft).length ||
+                    (mode === 'edit' && (!data.files?.length || !!data.unsupportedFiles?.length))
                 }
                 loading={busy && !confirm}
                 onClick={() => (mode === 'edit' ? setConfirm('files') : save())}
@@ -391,6 +603,28 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                     {feedback.text}
                 </Text>
             )}
+            {restoreField && (
+                <Modal
+                    handlers={{
+                        close: () => setRestoreField(undefined),
+                        open: () => undefined,
+                        toggle: () => setRestoreField(undefined),
+                    }}
+                    opened
+                    title={t('site.restoreField')}
+                >
+                    <Stack>
+                        <Text size="sm">
+                            {t('metadataEditor.restoreConfirm', {
+                                field: fieldLabel(restoreField),
+                            })}
+                        </Text>
+                        <Button loading={busy} onClick={() => save([restoreField])}>
+                            {t('site.restoreField')}
+                        </Button>
+                    </Stack>
+                </Modal>
+            )}
             {confirm && (
                 <Modal
                     handlers={{
@@ -419,6 +653,9 @@ function Editor({ id, kind }: { id: string; kind: EntityKind }) {
                                 </Text>
                                 <Text size="sm">
                                     {Object.keys(draft).map(fieldLabel).join(' · ')}
+                                </Text>
+                                <Text c="dimmed" size="sm">
+                                    {t('metadataEditor.fileOverrides')}
                                 </Text>
                                 <div
                                     style={{
@@ -488,6 +725,7 @@ function LyricsField({
     value: string;
 }) {
     const { t } = useTranslation();
+    const playback = usePlayer();
     const [index, setIndex] = useState(0);
     const [preview, setPreview] = useState(false);
     const [error, setError] = useState('');
@@ -498,7 +736,8 @@ function LyricsField({
     } catch {
         lyrics = [];
     }
-    const current = lyrics[index];
+    const selectedIndex = Math.min(index, Math.max(0, lyrics.length - 1));
+    const current = lyrics[selectedIndex];
     const format = (ms: number) =>
         `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${((ms % 60000) / 1000).toFixed(3).padStart(6, '0')}`;
     const text =
@@ -532,7 +771,9 @@ function LyricsField({
         onChange(
             JSON.stringify(
                 lyrics.length
-                    ? lyrics.map((lyric, position) => (position === index ? updated : lyric))
+                    ? lyrics.map((lyric, position) =>
+                          position === selectedIndex ? updated : lyric,
+                      )
                     : [updated],
             ),
         );
@@ -547,12 +788,23 @@ function LyricsField({
                     query: { id },
                 });
                 if (isRoomActive()) throw new Error(t('discussion.sharedSeek'));
-                usePlayerStoreBase.getState().setQueue([song], 0, ms / 1000);
+                playback.setQueue([song], 0, ms / 1000);
+                return;
             }
             usePlayerStoreBase.getState().mediaSeekToTimestamp(ms / 1000);
         } catch (error) {
             setError((error as Error).message);
         }
+    };
+    const updateVersion = (changes: Partial<Lyric>) => {
+        if (!current) return;
+        onChange(
+            JSON.stringify(
+                lyrics.map((lyric, position) =>
+                    position === selectedIndex ? { ...lyric, ...changes } : lyric,
+                ),
+            ),
+        );
     };
     return (
         <Stack gap="xs">
@@ -565,8 +817,67 @@ function LyricsField({
                     }))}
                     label={t('metadataEditor.lyricVersion')}
                     onChange={(value) => setIndex(Number(value))}
-                    value={String(index)}
+                    value={String(selectedIndex)}
                 />
+            )}
+            <Group gap="xs">
+                <Button
+                    disabled={disabled}
+                    onClick={() => {
+                        onChange(
+                            JSON.stringify([...lyrics, { lang: 'und', line: [], synced: false }]),
+                        );
+                        setIndex(lyrics.length);
+                    }}
+                    size="compact-sm"
+                    variant="light"
+                >
+                    {t('metadataEditor.addLyric')}
+                </Button>
+                {current && (
+                    <Button
+                        color="red"
+                        disabled={disabled}
+                        onClick={() =>
+                            onChange(
+                                JSON.stringify(
+                                    lyrics.filter((_, position) => position !== selectedIndex),
+                                ),
+                            )
+                        }
+                        size="compact-sm"
+                        variant="subtle"
+                    >
+                        {t('metadataEditor.deleteLyric')}
+                    </Button>
+                )}
+            </Group>
+            {current && (
+                <Group grow>
+                    <TextInput
+                        disabled={disabled}
+                        label={t('metadataEditor.lyricLanguage')}
+                        maxLength={35}
+                        onChange={(event) => updateVersion({ lang: event.currentTarget.value })}
+                        placeholder="und"
+                        value={current.lang}
+                    />
+                    <Select
+                        allowDeselect={false}
+                        data={[
+                            { label: t('metadataEditor.mainLyrics'), value: 'main' },
+                            { label: t('metadataEditor.translationLyrics'), value: 'translation' },
+                            {
+                                label: t('metadataEditor.pronunciationLyrics'),
+                                value: 'pronunciation',
+                            },
+                        ]}
+                        disabled={disabled}
+                        label={t('metadataEditor.lyricKind')}
+                        onChange={(kind) => updateVersion({ kind: kind ?? 'main' })}
+                        value={current.kind || 'main'}
+                    />
+                </Group>
             )}
             <Textarea
                 autosize

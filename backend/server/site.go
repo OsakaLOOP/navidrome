@@ -24,6 +24,7 @@ func (s *Server) mountSiteRoutes() {
 		r.With(ClientIPRateLimiter(10, time.Minute)).Post("/identity/bind", s.bindIdentity)
 		r.Get("/media/*", s.mediaGrant)
 		r.Get("/metadata/{kind}/{id}", s.getMetadata)
+		r.Get("/metadata-artists", s.metadataArtists)
 		r.Put("/metadata/{kind}/{id}", s.saveMetadata)
 		r.Post("/cover/{kind}/{id}", s.saveCover)
 		r.Delete("/cover/{kind}/{id}", s.restoreCover)

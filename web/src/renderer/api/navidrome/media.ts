@@ -1,5 +1,4 @@
 import { offlineCoverUrl } from '/@/renderer/features/site/offline';
-
 import {
     ImageArgs,
     ImageRequest,
@@ -16,7 +15,7 @@ export const getMediaImageRequest = ({
 
     let id = query.id.split('&')[0];
     if (!navigator.onLine && window.SERVER_NAME === 'ndFork') {
-        const cover = offlineCoverUrl(id, server.url, server.userId);
+        const cover = offlineCoverUrl(id, server.url, server.userId ?? undefined);
         if (cover) return { cacheKey: cover, url: cover };
     }
     if (!/^(al|ar|mf|pl|ra|dc)-/.test(id)) {

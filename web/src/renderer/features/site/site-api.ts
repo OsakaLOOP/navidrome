@@ -21,7 +21,7 @@ export const siteApi = {
             const error = await response.json().catch(() => ({}));
             throw new Error(error.message || response.statusText);
         }
-        return response.status === 204 ? undefined : response.json();
+        return response.status === 204 ? (undefined as T) : response.json();
     },
 };
 
@@ -37,11 +37,12 @@ export type SiteAuth = {
 
 export function acceptSiteAuth(data: SiteAuth) {
     const store = useAuthStore.getState();
+    const url = window.SERVER_URL || window.location.origin;
     if (store.currentServer?.userId && store.currentServer.userId !== data.id) {
         queryClient.clear();
         usePlayerStoreBase.getState().clearQueue();
     }
-    const server = Object.values(store.serverList).find((s) => s.url === window.SERVER_URL);
+    const server = Object.values(store.serverList).find((s) => s.url === url);
     const item = {
         ...server,
         credential: `u=${encodeURIComponent(data.username)}&jwt=${encodeURIComponent(data.token)}`,
@@ -50,7 +51,7 @@ export function acceptSiteAuth(data: SiteAuth) {
         name: 'ndFork',
         ndCredential: data.token,
         type: ServerType.NAVIDROME,
-        url: window.SERVER_URL,
+        url,
         userId: data.id,
         username: data.username,
     };

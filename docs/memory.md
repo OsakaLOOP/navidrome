@@ -11,5 +11,6 @@
 - 本站功能入口为 `backend/server/site.go` 与 `web/src/renderer/features/site/`，覆盖账号绑定、元数据、评论、一起听与离线管理。
 - 评论区、一起听和标签编辑分别由 `discussion-panel.tsx`、`room.tsx` 和 `metadata-editor.tsx` 提供。相关后端入口为 `backend/server/site_social.go`、`backend/server/site_room.go` 与 `backend/server/site_metadata.go`。
 - 持久化覆写合并位于 `backend/persistence/metadata_overrides.go`；`source_updated_at` 保存文件时间，`updated_at` 保存对外有效版本，扫描器依据文件时间检查变化。
+- 标签写入入口为 `backend/server/site_metadata.go` 的 `editFileTags`，使用现有 TagLib 依赖修改并回读待替换的副本。
 - 站内媒体授权位于 `backend/server/media_grant.go`，采用 EdgeOne D 类型，部署说明为 `deploy/edgeone.md`。
 

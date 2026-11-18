@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -15,12 +14,12 @@ import (
 	"net/http"
 	"time"
 
-	. "github.com/Masterminds/squirrel"
 	"github.com/go-chi/chi/v5"
 	"github.com/navidrome/navidrome/core/artwork"
 	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/model/request"
 	"github.com/navidrome/navidrome/persistence"
+	"github.com/navidrome/navidrome/scanner"
 	"github.com/zeebo/xxh3"
 	_ "golang.org/x/image/webp"
 )
@@ -64,12 +63,18 @@ func (s *Server) saveCover(w http.ResponseWriter, r *http.Request) {
 	}
 	siteMetadataMu.Lock()
 	defer siteMetadataMu.Unlock()
-	hash := fmt.Sprintf("%016x", xxh3.Hash(data))
-	mime := "image/" + format
-	if err = artwork.GetImageStore().Write(hash, mime, bytes.NewReader(data)); err != nil {
-		siteError(w, 500, "保存图片失败")
+	release, ok := scanner.LockForMaintenance()
+	if !ok {
+		siteError(w, 409, "请等待音乐库扫描完成")
 		return
 	}
+	defer release()
+	if _, err := s.metadataObject(r.Context(), kind, itemID); err != nil {
+		siteError(w, 404, "对象不存在")
+		return
+	}
+	hash := fmt.Sprintf("%016x", xxh3.Hash(data))
+	mime := "image/" + format
 	artKind := coverKind(kind)
 	ctx := r.Context()
 	err = s.ds.WithTx(func(tx model.DataStore) error {
@@ -95,7 +100,10 @@ func (s *Server) saveCover(w http.ResponseWriter, r *http.Request) {
 		if err = repo.PutItemArtwork(original); err != nil {
 			return err
 		}
-		return touchArtworkMetadata(ctx, tx, kind, itemID, u.ID)
+		if err := persistence.BumpArtworkVersion(ctx, tx, kind, itemID, time.Now().UTC()); err != nil {
+			return err
+		}
+		return artwork.GetImageStore().Write(hash, mime, bytes.NewReader(data))
 	})
 	if err != nil {
 		siteError(w, 500, "更新封面失败")
@@ -118,6 +126,12 @@ func (s *Server) restoreCover(w http.ResponseWriter, r *http.Request) {
 	artKind := coverKind(kind)
 	siteMetadataMu.Lock()
 	defer siteMetadataMu.Unlock()
+	release, ok := scanner.LockForMaintenance()
+	if !ok {
+		siteError(w, 409, "请等待音乐库扫描完成")
+		return
+	}
+	defer release()
 	ctx := r.Context()
 	err := s.ds.WithTx(func(tx model.DataStore) error {
 		source, err := persistence.SiteArtworkSource(ctx, tx, artKind.Prefix(), itemID)
@@ -140,7 +154,7 @@ func (s *Server) restoreCover(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return touchArtworkMetadata(ctx, tx, kind, itemID, u.ID)
+		return persistence.BumpArtworkVersion(ctx, tx, kind, itemID, time.Now().UTC())
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		siteError(w, 404, "尚未设置封面覆写")
@@ -151,66 +165,4 @@ func (s *Server) restoreCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
-}
-
-func touchArtworkMetadata(ctx context.Context, tx model.DataStore, kind, itemID, userID string) error {
-	at := time.Now().UTC()
-	touch := func(kind, id string, item any) error {
-		if err := persistence.RestoreMetadataSource(ctx, tx, kind, id, item); err != nil {
-			return err
-		}
-		fields, err := model.MetadataValues(kind, item)
-		if err != nil {
-			return err
-		}
-		source, _ := json.Marshal(fields)
-		// 更新时保留已有覆写规则。
-		if err := persistence.TouchMetadata(ctx, tx, kind, id, string(source), userID, at); err != nil {
-			return err
-		}
-		switch value := item.(type) {
-		case *model.MediaFile:
-			value.UpdatedAt = at
-			return tx.MediaFile(ctx).Put(value)
-		case *model.Album:
-			value.UpdatedAt = at
-			return tx.Album(ctx).Put(value)
-		case *model.Artist:
-			value.UpdatedAt = &at
-			return tx.Artist(ctx).Put(value)
-		}
-		return nil
-	}
-	switch kind {
-	case "song":
-		item, e := tx.MediaFile(ctx).Get(itemID)
-		if e != nil {
-			return e
-		}
-		return touch(kind, itemID, item)
-	case "artist":
-		item, e := tx.Artist(ctx).Get(itemID)
-		if e != nil {
-			return e
-		}
-		return touch(kind, itemID, item)
-	case "album":
-		item, e := tx.Album(ctx).Get(itemID)
-		if e != nil {
-			return e
-		}
-		if e = touch(kind, itemID, item); e != nil {
-			return e
-		}
-		tracks, e := tx.MediaFile(ctx).GetAll(model.QueryOptions{Filters: Eq{"album_id": itemID}})
-		if e != nil {
-			return e
-		}
-		for i := range tracks {
-			if e = touch("song", tracks[i].ID, &tracks[i]); e != nil {
-				return e
-			}
-		}
-	}
-	return nil
 }
