@@ -8,7 +8,8 @@ import styles from './full-screen-player-queue.module.css';
 import { Lyrics } from '/@/renderer/features/lyrics/lyrics';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { FullScreenSimilarSongs } from '/@/renderer/features/player/components/full-screen-similar-songs';
-import { DiscussionPanel } from '/@/renderer/features/site/discussion-panel';
+import { useIsRadioActive } from '/@/renderer/features/radio/hooks/use-radio-player';
+import { DiscussionPanel, useDiscussionCount } from '/@/renderer/features/site/discussion-panel';
 import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
 import { useListSettings, usePlaybackSettings, useSettingsStore } from '/@/renderer/store';
 import {
@@ -19,6 +20,7 @@ import { usePlayerSong } from '/@/renderer/store/player.store';
 import { ActionIcon } from '/@/shared/components/action-icon/action-icon';
 import { Group } from '/@/shared/components/group/group';
 import { AppIcon } from '/@/shared/components/icon/icon';
+import { Text } from '/@/shared/components/text/text';
 import { ItemListKey } from '/@/shared/types/types';
 
 const AudioMotionAnalyzerVisualizer = lazy(() =>
@@ -65,6 +67,7 @@ const moduleContentVariants: Variants = {
 
 interface ControlItem {
     active: boolean;
+    count?: number;
     icon: keyof typeof AppIcon;
     label: string;
     onClick: () => void;
@@ -72,6 +75,9 @@ interface ControlItem {
 
 const Controls = () => {
     const { t } = useTranslation();
+    const song = usePlayerSong();
+    const radio = useIsRadioActive();
+    const count = useDiscussionCount(radio ? undefined : song?.id);
     const { activeTab } = useFullScreenPlayerStore();
     const { setStore } = useFullScreenPlayerStoreActions();
     const { webAudio } = usePlaybackSettings();
@@ -111,17 +117,18 @@ const Controls = () => {
             });
         }
 
-        if (window.SERVER_NAME === 'ndFork')
+        if (window.SERVER_NAME === 'ndFork' && song?.id && !radio)
             items.push({
                 active: activeTab === 'discussion',
-                icon: 'info',
+                count,
+                icon: 'discussion',
                 label: t('site.discussion'),
                 onClick: () => toggleTab('discussion'),
             });
 
         return items;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab, setStore, t, webAudio]);
+    }, [activeTab, count, radio, setStore, song?.id, t, webAudio]);
 
     return (
         <Group
@@ -133,6 +140,9 @@ const Controls = () => {
             {headerItems.map((item) => (
                 <div key={`tab-${item.label}`}>
                     <ActionIcon
+                        aria-label={
+                            item.count === undefined ? item.label : `${item.label} (${item.count})`
+                        }
                         icon={item.icon}
                         iconProps={{
                             color: item.active ? 'primary' : undefined,
@@ -142,6 +152,11 @@ const Controls = () => {
                         tooltip={{ label: item.label }}
                         variant="subtle"
                     ></ActionIcon>
+                    {!!item.count && (
+                        <Text aria-hidden="true" size="xs" ta="center">
+                            {item.count > 99 ? '99+' : item.count}
+                        </Text>
+                    )}
                 </div>
             ))}
         </Group>
@@ -152,6 +167,7 @@ export const FullScreenPlayerControls = Controls;
 
 export const FullScreenPlayerQueue = () => {
     const shared = useRoomActive();
+    const radio = useIsRadioActive();
     const song = usePlayerSong();
     const { activeTab } = useFullScreenPlayerStore();
     const { webAudio } = usePlaybackSettings();
@@ -211,7 +227,7 @@ export const FullScreenPlayerQueue = () => {
                     >
                         <Lyrics fadeOutNoLyricsMessage={false} />
                     </motion.div>
-                ) : activeTab === 'discussion' && song ? (
+                ) : activeTab === 'discussion' && song && !radio ? (
                     <div
                         className={styles.moduleContent}
                         key={song.id}

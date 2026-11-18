@@ -27,15 +27,30 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		before = int(^uint(0) >> 1)
 	}
 	anchor, _ := strconv.Atoi(r.URL.Query().Get("comment"))
-	rows, err := db.Db().QueryContext(r.Context(), `SELECT c.id,COALESCE(c.user_id,''),COALESCE(u.name,''),c.body,c.parent_id,c.position,c.deleted,c.created_at,
-        CASE WHEN c.deleted=0 THEN (SELECT COUNT(*) FROM site_comment_like l WHERE l.comment_id=c.id) ELSE 0 END,
+	thread, _ := strconv.Atoi(r.URL.Query().Get("thread"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset = max(0, offset)
+	order := "c.id DESC"
+	if r.URL.Query().Get("sort") == "hot" && thread == 0 {
+		order = "likes DESC, c.id DESC"
+	} else if thread != 0 {
+		order = "c.id ASC"
+	}
+	rows, err := db.Db().QueryContext(r.Context(), `WITH RECURSIVE thread(id) AS (
+        SELECT id FROM site_comment WHERE id=? AND kind=? AND item_id=?
+        UNION ALL SELECT child.id FROM site_comment child JOIN thread ON child.parent_id=thread.id WHERE child.kind=? AND child.item_id=?
+        ) SELECT c.id,COALESCE(c.user_id,''),COALESCE(u.name,''),c.body,c.parent_id,c.position,c.deleted,c.created_at,
+        CASE WHEN c.deleted=0 THEN (SELECT COUNT(*) FROM site_comment_like l WHERE l.comment_id=c.id) ELSE 0 END AS likes,
         c.deleted=0 AND EXISTS(SELECT 1 FROM site_comment_like l WHERE l.comment_id=c.id AND l.user_id=?),
-        COALESCE(pu.name,''),CASE WHEN p.deleted=0 THEN substr(p.body,1,160) ELSE '' END,COALESCE(p.deleted,1)
+        COALESCE(pu.name,''),CASE WHEN p.deleted=0 THEN substr(p.body,1,160) ELSE '' END,COALESCE(p.deleted,1),
+        EXISTS(SELECT 1 FROM site_comment child WHERE child.parent_id=c.id AND (child.deleted=0 OR EXISTS(SELECT 1 FROM site_comment descendant WHERE descendant.parent_id=child.id)))
         FROM site_comment c LEFT JOIN user u ON u.id=c.user_id
         LEFT JOIN site_comment p ON p.id=c.parent_id AND p.kind=c.kind AND p.item_id=c.item_id
         LEFT JOIN user pu ON pu.id=p.user_id
-        WHERE c.kind=? AND c.item_id=? AND ((?=0 AND c.id<?) OR c.id=?) AND (c.deleted=0 OR EXISTS(SELECT 1 FROM site_comment child WHERE child.parent_id=c.id))
-        ORDER BY c.id DESC LIMIT 31`, u.ID, kind, itemID, anchor, before, anchor)
+        WHERE c.kind=? AND c.item_id=? AND (c.id=? OR (?=0 AND c.id<? AND
+            ((?=0 AND (c.parent_id IS NULL OR ?=1)) OR (c.id<>? AND c.id IN (SELECT id FROM thread))) AND (?=0 OR c.position IS NOT NULL)))
+          AND (c.deleted=0 OR EXISTS(SELECT 1 FROM site_comment child WHERE child.parent_id=c.id))
+        ORDER BY `+order+` LIMIT 31 OFFSET ?`, thread, kind, itemID, kind, itemID, u.ID, kind, itemID, anchor, anchor, before, thread, r.URL.Query().Has("timed"), thread, r.URL.Query().Has("timed"), offset)
 	if err != nil {
 		siteError(w, 500, "读取评论失败")
 		return
@@ -46,8 +61,8 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		var author, name, body, created, parentName, parentBody string
 		var parent sql.NullInt64
 		var position sql.NullFloat64
-		var deleted, liked, parentDeleted bool
-		if rows.Scan(&id, &author, &name, &body, &parent, &position, &deleted, &created, &likes, &liked, &parentName, &parentBody, &parentDeleted) != nil {
+		var deleted, liked, parentDeleted, replies bool
+		if rows.Scan(&id, &author, &name, &body, &parent, &position, &deleted, &created, &likes, &liked, &parentName, &parentBody, &parentDeleted, &replies) != nil {
 			rows.Close()
 			siteError(w, 500, "读取评论失败")
 			return
@@ -66,7 +81,7 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		if parsed, err := time.Parse(time.DateTime, created); err == nil {
 			created = parsed.Format(time.RFC3339)
 		}
-		comments = append(comments, map[string]any{"id": id, "userId": author, "name": name, "body": body, "parent": reply, "position": pos, "deleted": deleted, "createdAt": created, "likes": likes, "liked": liked, "canDelete": u.IsAdmin || author == u.ID})
+		comments = append(comments, map[string]any{"id": id, "userId": author, "name": name, "body": body, "parent": reply, "position": pos, "deleted": deleted, "createdAt": created, "likes": likes, "liked": liked, "canDelete": u.IsAdmin || author == u.ID, "hasReplies": replies})
 	}
 	err = rows.Err()
 	rows.Close()
@@ -75,15 +90,28 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if anchor > 0 {
-		_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments})
+		var root int
+		err := db.Db().QueryRowContext(r.Context(), `WITH RECURSIVE ancestors(id,parent_id) AS (
+          SELECT id,parent_id FROM site_comment WHERE id=? AND kind=? AND item_id=?
+          UNION ALL SELECT p.id,p.parent_id FROM site_comment p JOIN ancestors a ON a.parent_id=p.id WHERE p.kind=? AND p.item_id=?
+        ) SELECT id FROM ancestors WHERE parent_id IS NULL`, anchor, kind, itemID, kind, itemID).Scan(&root)
+		if err != nil || len(comments) == 0 {
+			siteError(w, 404, "评论不存在")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments, "root": root})
 		return
 	}
 	var next any
 	if len(comments) == 31 {
 		comments = comments[:30]
-		next = comments[29]["id"]
+		if order == "c.id DESC" {
+			next = comments[29]["id"]
+		} else {
+			next = offset + 30
+		}
 	}
-	if r.URL.Query().Has("before") {
+	if thread != 0 || r.URL.Query().Has("before") || offset > 0 {
 		_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments, "next": next})
 		return
 	}
@@ -102,8 +130,42 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		siteError(w, 500, "读取收藏失败")
 		return
 	}
+	var public int
+	err = db.Db().QueryRowContext(r.Context(), `SELECT COUNT(*) FROM annotation a JOIN site_privacy p ON p.user_id=a.user_id WHERE a.item_type=? AND a.item_id=? AND a.starred=1 AND p.favorites='public'`, itemType, itemID).Scan(&public)
+	if err != nil {
+		siteError(w, 500, "读取收藏失败")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments, "commentCount": commentCount, "favoriteCount": count, "publicCount": public, "next": next})
+}
+
+func (s *Server) discussionCount(w http.ResponseWriter, r *http.Request) {
+	kind, itemID := chi.URLParam(r, "kind"), chi.URLParam(r, "id")
+	if _, err := s.metadataObject(r.Context(), kind, itemID); err != nil {
+		siteError(w, 404, "对象不可访问")
+		return
+	}
+	var count int
+	if db.Db().QueryRowContext(r.Context(), `SELECT COUNT(*) FROM site_comment WHERE kind=? AND item_id=? AND deleted=0`, kind, itemID).Scan(&count) != nil {
+		siteError(w, 500, "读取评论失败")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
+}
+
+func (s *Server) favoritePeople(w http.ResponseWriter, r *http.Request) {
+	kind, itemID := chi.URLParam(r, "kind"), chi.URLParam(r, "id")
+	if _, err := s.metadataObject(r.Context(), kind, itemID); err != nil {
+		siteError(w, 404, "对象不可访问")
+		return
+	}
+	if kind == "song" {
+		kind = "media_file"
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset = max(0, offset)
 	people := []map[string]string{}
-	rows, err = db.Db().QueryContext(r.Context(), `SELECT u.id,u.name FROM annotation a JOIN user u ON u.id=a.user_id JOIN site_privacy p ON p.user_id=u.id WHERE a.item_type=? AND a.item_id=? AND a.starred=1 AND p.favorites='public' ORDER BY u.name LIMIT 100`, itemType, itemID)
+	rows, err := db.Db().QueryContext(r.Context(), `SELECT u.id,u.name FROM annotation a JOIN user u ON u.id=a.user_id JOIN site_privacy p ON p.user_id=u.id WHERE a.item_type=? AND a.item_id=? AND a.starred=1 AND p.favorites='public' ORDER BY u.name,u.id LIMIT 31 OFFSET ?`, kind, itemID, offset)
 	if err != nil {
 		siteError(w, 500, "读取收藏失败")
 		return
@@ -115,7 +177,12 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows.Close()
-	_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments, "commentCount": commentCount, "favoriteCount": count, "people": people, "next": next})
+	var next any
+	if len(people) == 31 {
+		people = people[:30]
+		next = offset + 30
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"people": people, "next": next})
 }
 
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +217,41 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		siteError(w, 409, "回复的评论已删除或不可访问")
+		return
+	}
+	commentID, err := result.LastInsertId()
+	if err != nil {
+		siteError(w, 500, "读取评论失败")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": commentID})
+}
+
+func (s *Server) editComment(w http.ResponseWriter, r *http.Request) {
+	id, author, ok := s.commentAccess(w, r)
+	if !ok {
+		return
+	}
+	user, _ := request.UserFrom(r.Context())
+	if user.ID != author {
+		siteError(w, 403, "无权编辑评论")
+		return
+	}
+	var input struct {
+		Body string `json:"body"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.Body) == "" || utf8.RuneCountInString(input.Body) > 4000 {
+		siteError(w, 400, "评论内容无效")
+		return
+	}
+	result, err := db.Db().ExecContext(r.Context(), `UPDATE site_comment SET body=? WHERE id=? AND deleted=0`, strings.TrimSpace(input.Body), id)
+	if err != nil {
+		siteError(w, 500, "编辑失败")
+		return
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		siteError(w, 409, "评论已删除")
 		return
 	}
 	w.WriteHeader(204)
@@ -220,7 +322,13 @@ func (s *Server) likeComment(w http.ResponseWriter, r *http.Request) {
 		siteError(w, 500, "点赞失败")
 		return
 	}
-	w.WriteHeader(204)
+	var likes int
+	var liked bool
+	if err := db.Db().QueryRowContext(r.Context(), `SELECT COUNT(*),COALESCE(MAX(user_id=?),0) FROM site_comment_like WHERE comment_id=?`, u.ID, id).Scan(&likes, &liked); err != nil {
+		siteError(w, 500, "读取点赞失败")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"likes": likes, "liked": liked})
 }
 
 func (s *Server) getPrivacy(w http.ResponseWriter, r *http.Request) {
@@ -259,30 +367,150 @@ func (s *Server) siteProfile(w http.ResponseWriter, r *http.Request) {
 	_ = db.Db().QueryRowContext(r.Context(), "SELECT favorites FROM site_privacy WHERE user_id=?", id).Scan(&visibility)
 	viewer, _ := request.UserFrom(r.Context())
 	favorites := []map[string]any{}
+	var next any
 	if visibility == "public" || viewer.ID == id {
-		rows, e := db.Db().QueryContext(r.Context(), "SELECT item_type,item_id FROM annotation WHERE user_id=? AND starred=1 ORDER BY starred_at DESC LIMIT 100", id)
+		kind := r.URL.Query().Get("kind")
+		if kind == "song" {
+			kind = "media_file"
+		}
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		offset = max(0, offset)
+		rows, e := db.Db().QueryContext(r.Context(), `SELECT a.item_type,a.item_id,COALESCE(m.title,b.name,t.name)
+            FROM annotation a
+            LEFT JOIN media_file m ON a.item_type='media_file' AND m.id=a.item_id
+            LEFT JOIN album b ON a.item_type='album' AND b.id=a.item_id
+            LEFT JOIN artist t ON a.item_type='artist' AND t.id=a.item_id
+            WHERE a.user_id=? AND a.starred=1 AND (?='' OR a.item_type=?) AND COALESCE(m.title,b.name,t.name) IS NOT NULL
+            AND (? OR EXISTS(SELECT 1 FROM user_library access WHERE access.user_id=? AND (
+                access.library_id=m.library_id OR
+                access.library_id=b.library_id OR
+                EXISTS(SELECT 1 FROM library_artist lt WHERE lt.artist_id=t.id AND lt.library_id=access.library_id))))
+            ORDER BY a.starred_at DESC,a.item_type,a.item_id LIMIT 31 OFFSET ?`, id, kind, kind, viewer.IsAdmin, viewer.ID, offset)
 		if e != nil {
 			siteError(w, 500, "读取收藏失败")
 			return
 		}
-		type ref struct{ kind, id string }
-		refs := []ref{}
 		for rows.Next() {
-			var value ref
-			if rows.Scan(&value.kind, &value.id) == nil {
-				refs = append(refs, value)
+			var itemKind, itemID, title string
+			if rows.Scan(&itemKind, &itemID, &title) != nil {
+				rows.Close()
+				siteError(w, 500, "读取收藏失败")
+				return
 			}
+			if itemKind == "media_file" {
+				itemKind = "song"
+			}
+			favorites = append(favorites, map[string]any{"kind": itemKind, "id": itemID, "title": title})
 		}
+		err := rows.Err()
 		rows.Close()
-		for _, value := range refs {
-			if value.kind == "media_file" {
-				value.kind = "song"
-			}
-			item, e := s.metadataObject(r.Context(), value.kind, value.id)
-			if e == nil {
-				favorites = append(favorites, map[string]any{"kind": value.kind, "id": value.id, "item": item})
-			}
+		if err != nil {
+			siteError(w, 500, "读取收藏失败")
+			return
+		}
+		if len(favorites) == 31 {
+			favorites = favorites[:30]
+			next = offset + 30
 		}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": user.Name, "favorites": favorites, "visibility": visibility})
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": user.Name, "favorites": favorites, "visibility": visibility, "canView": visibility == "public" || viewer.ID == id, "next": next})
+}
+
+func (s *Server) reportComment(w http.ResponseWriter, r *http.Request) {
+	id, author, ok := s.commentAccess(w, r)
+	if !ok {
+		return
+	}
+	user, _ := request.UserFrom(r.Context())
+	if user.ID == author {
+		siteError(w, 400, "请选择其他用户的评论")
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.Reason) == "" || utf8.RuneCountInString(input.Reason) > 500 {
+		siteError(w, 400, "举报理由无效")
+		return
+	}
+	_, err := db.Db().ExecContext(r.Context(), `INSERT INTO site_comment_report(comment_id,user_id,reason) SELECT id,?,? FROM site_comment WHERE id=? AND deleted=0 ON CONFLICT DO NOTHING`, user.ID, strings.TrimSpace(input.Reason), id)
+	if err != nil {
+		siteError(w, 500, "举报失败")
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (s *Server) commentReports(w http.ResponseWriter, r *http.Request) {
+	user, _ := request.UserFrom(r.Context())
+	if !user.IsAdmin {
+		siteError(w, 403, "仅管理员可审核举报")
+		return
+	}
+	rows, err := db.Db().QueryContext(r.Context(), `SELECT c.id,c.body,COALESCE(u.name,''),GROUP_CONCAT(r.reason,char(10)),COUNT(*) FROM site_comment_report r JOIN site_comment c ON c.id=r.comment_id LEFT JOIN user u ON u.id=c.user_id WHERE r.reviewed=0 AND c.deleted=0 GROUP BY c.id ORDER BY MIN(r.rowid) LIMIT 30`)
+	if err != nil {
+		siteError(w, 500, "读取举报失败")
+		return
+	}
+	defer rows.Close()
+	reports := []map[string]any{}
+	for rows.Next() {
+		var id, count int
+		var body, name, reason string
+		if rows.Scan(&id, &body, &name, &reason, &count) != nil {
+			siteError(w, 500, "读取举报失败")
+			return
+		}
+		reports = append(reports, map[string]any{"id": id, "body": body, "name": name, "reason": reason, "count": count})
+	}
+	if rows.Err() != nil {
+		siteError(w, 500, "读取举报失败")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(reports)
+}
+
+func (s *Server) reviewCommentReport(w http.ResponseWriter, r *http.Request) {
+	user, _ := request.UserFrom(r.Context())
+	if !user.IsAdmin {
+		siteError(w, 403, "仅管理员可审核举报")
+		return
+	}
+	id, _ := strconv.Atoi(chi.URLParam(r, "commentId"))
+	if id <= 0 {
+		siteError(w, 400, "评论无效")
+		return
+	}
+	var input struct {
+		Remove *bool `json:"remove"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024)
+	if json.NewDecoder(r.Body).Decode(&input) != nil || input.Remove == nil {
+		siteError(w, 400, "审核操作无效")
+		return
+	}
+	tx, err := db.Db().BeginTx(r.Context(), nil)
+	if err == nil {
+		defer tx.Rollback()
+		var result sql.Result
+		result, err = tx.ExecContext(r.Context(), `UPDATE site_comment_report SET reviewed=1 WHERE comment_id=? AND reviewed=0`, id)
+		if err == nil {
+			if count, _ := result.RowsAffected(); count == 0 {
+				siteError(w, 404, "待审核举报不存在")
+				return
+			}
+			if *input.Remove {
+				_, err = tx.ExecContext(r.Context(), `UPDATE site_comment SET body='',deleted=1 WHERE id=?`, id)
+			}
+		}
+		if err == nil {
+			err = tx.Commit()
+		}
+	}
+	if err != nil {
+		siteError(w, 500, "审核失败")
+		return
+	}
+	w.WriteHeader(204)
 }

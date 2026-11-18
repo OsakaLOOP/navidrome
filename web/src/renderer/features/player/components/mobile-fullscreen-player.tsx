@@ -493,7 +493,8 @@ export const MobileFullscreenPlayer = () => {
     );
 
     const shared = useRoomActive();
-    const isDiscussionState = activeTab === 'discussion' && Boolean(currentSong?.id);
+    const isDiscussionState =
+        activeTab === 'discussion' && !isRadioActive && Boolean(currentSong?.id);
     const isPlayerState = activeTab !== 'queue' && activeTab !== 'lyrics' && !isDiscussionState;
     const isQueueState = activeTab === 'queue';
     const isLyricsState = activeTab === 'lyrics';
@@ -538,7 +539,7 @@ export const MobileFullscreenPlayer = () => {
                     isQueueActive={isQueueState}
                     onToggleContextMenu={handleToggleContextMenu}
                     onToggleDiscussion={
-                        window.SERVER_NAME === 'ndFork' && currentSong?.id
+                        window.SERVER_NAME === 'ndFork' && !isRadioActive && currentSong?.id
                             ? () => setStore({ activeTab: 'discussion' })
                             : undefined
                     }
@@ -641,6 +642,18 @@ export const MobileFullscreenPlayer = () => {
                             <Text fw={600} size="sm" truncate>
                                 {currentSong.name}
                             </Text>
+                            <ActionIcon
+                                aria-label={t('page.fullscreenPlayer.lyrics')}
+                                icon="metadata"
+                                onClick={() => setStore({ activeTab: 'lyrics' })}
+                                variant="subtle"
+                            />
+                            <ActionIcon
+                                aria-label={t('page.fullscreenPlayer.upNext')}
+                                icon="queue"
+                                onClick={() => setStore({ activeTab: 'queue' })}
+                                variant="subtle"
+                            />
                             <ActionIcon
                                 aria-label={t('site.cancel')}
                                 icon="arrowDownS"

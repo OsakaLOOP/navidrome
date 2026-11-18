@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
@@ -8,6 +8,7 @@ import styles from './site.module.css';
 
 import { useAuthStore } from '/@/renderer/store/auth.store';
 import { Button } from '/@/shared/components/button/button';
+import { Group } from '/@/shared/components/group/group';
 import { PasswordInput } from '/@/shared/components/password-input/password-input';
 import { Select } from '/@/shared/components/select/select';
 import { Stack } from '/@/shared/components/stack/stack';
@@ -126,7 +127,12 @@ export default function AccountPage() {
                         {message}
                     </Text>
                 )}
-                {identity.data?.isAdmin && <IdentityManager />}
+                {identity.data?.isAdmin && (
+                    <>
+                        <CommentReports />
+                        <IdentityManager />
+                    </>
+                )}
             </Stack>
         </div>
     );
@@ -134,15 +140,26 @@ export default function AccountPage() {
 
 export function ProfilePage() {
     const { userId } = useParams();
-    const { data, error } = useQuery({
-        queryFn: () =>
-            siteApi.request<{
-                favorites: { id: string; item: { name?: string; title?: string }; kind: string }[];
-                name: string;
-                visibility: string;
-            }>(`/site/profile/${userId}`),
-        queryKey: ['site', 'profile', userId],
+    const server = useAuthStore((state) => state.currentServer);
+    const [kind, setKind] = useState('song');
+    type Profile = {
+        canView: boolean;
+        favorites: { id: string; kind: string; title: string }[];
+        name: string;
+        next?: null | number;
+    };
+    const profile = useInfiniteQuery({
+        enabled: Boolean(userId && server),
+        getNextPageParam: (last: Profile) => last.next ?? undefined,
+        initialPageParam: 0,
+        queryFn: ({ pageParam }): Promise<Profile> =>
+            siteApi.request(
+                `/site/profile/${encodeURIComponent(userId!)}?kind=${kind}&offset=${pageParam}`,
+            ),
+        queryKey: ['site', 'profile', server?.id, server?.userId, userId, kind],
     });
+    const data = profile.data?.pages[0];
+    const favorites = profile.data?.pages.flatMap((page) => page.favorites) ?? [];
     const { t } = useTranslation();
     return (
         <div className={styles.page}>
@@ -151,8 +168,33 @@ export function ProfilePage() {
                     {data?.name}
                 </Text>
                 <Text c="dimmed">{t('site.publicFavorites')}</Text>
-                {error && <Text c="red">{error.message}</Text>}
-                {data?.favorites.map((favorite) => (
+                {profile.isPending && <Text role="status">{t('discussion.loading')}</Text>}
+                {profile.isError && (
+                    <Button onClick={() => void profile.refetch()} variant="light">
+                        {t('discussion.retry')}
+                    </Button>
+                )}
+                {data && !data.canView && (
+                    <Text c="dimmed">{t('discussion.privateFavorites')}</Text>
+                )}
+                {data?.canView && (
+                    <Group gap="xs">
+                        {(['song', 'album', 'artist'] as const).map((item) => (
+                            <Button
+                                aria-pressed={kind === item}
+                                key={item}
+                                onClick={() => setKind(item)}
+                                variant={kind === item ? 'light' : 'subtle'}
+                            >
+                                {t(`entity.${item}`, { count: 2 })}
+                            </Button>
+                        ))}
+                    </Group>
+                )}
+                {data?.canView && !favorites.length && (
+                    <Text c="dimmed">{t('discussion.emptyFavorites')}</Text>
+                )}
+                {favorites.map((favorite) => (
                     <Button
                         component={Link}
                         key={`${favorite.kind}:${favorite.id}`}
@@ -165,11 +207,98 @@ export function ProfilePage() {
                         }
                         variant="subtle"
                     >
-                        {favorite.item.name || favorite.item.title}
+                        {favorite.title}
                     </Button>
                 ))}
+                {profile.hasNextPage && (
+                    <Button
+                        loading={profile.isFetchingNextPage}
+                        onClick={() => void profile.fetchNextPage()}
+                        variant="light"
+                    >
+                        {t('site.more')}
+                    </Button>
+                )}
             </Stack>
         </div>
+    );
+}
+
+function CommentReports() {
+    const { t } = useTranslation();
+    const server = useAuthStore((state) => state.currentServer);
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState<number>();
+    const reports = useQuery({
+        queryFn: () =>
+            siteApi.request<
+                { body: string; count: number; id: number; name: string; reason: string }[]
+            >('/site/comment-reports'),
+        queryKey: ['site', 'comment-reports', server?.id, server?.userId],
+    });
+    const review = async (id: number, remove: boolean) => {
+        setBusy(id);
+        setError('');
+        try {
+            await siteApi.request(`/site/comment-reports/${id}`, { remove }, 'PUT');
+            await reports.refetch();
+        } catch (cause) {
+            setError((cause as Error).message);
+        } finally {
+            setBusy(undefined);
+        }
+    };
+    return (
+        <Stack gap="xs">
+            <Text fw={700}>{t('discussion.reports')}</Text>
+            {error && (
+                <Text c="red" role="alert">
+                    {error}
+                </Text>
+            )}
+            {reports.isError && (
+                <Button onClick={() => void reports.refetch()} variant="light">
+                    {t('discussion.retry')}
+                </Button>
+            )}
+            {reports.data?.length === 0 && <Text c="dimmed">{t('discussion.noReports')}</Text>}
+            {reports.data?.map((item) => (
+                <Stack gap={4} key={item.id}>
+                    <Text fw={600}>
+                        {item.name} · {item.count}
+                    </Text>
+                    <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
+                        {item.body}
+                    </Text>
+                    <Text
+                        c="dimmed"
+                        size="sm"
+                        style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}
+                    >
+                        {item.reason}
+                    </Text>
+                    <Group gap="xs">
+                        <Button
+                            disabled={busy !== undefined}
+                            onClick={() => void review(item.id, false)}
+                            size="compact-sm"
+                            variant="light"
+                        >
+                            {t('discussion.keepComment')}
+                        </Button>
+                        <Button
+                            color="red"
+                            disabled={busy !== undefined}
+                            onClick={() => void review(item.id, true)}
+                            size="compact-sm"
+                            variant="light"
+                        >
+                            {t('site.delete')}
+                        </Button>
+                    </Group>
+                </Stack>
+            ))}
+        </Stack>
     );
 }
 

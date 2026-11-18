@@ -1,5 +1,5 @@
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { ReactNode, useId, useRef, useState } from 'react';
+import { InfiniteData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 
@@ -11,6 +11,7 @@ import { isRoomActive, useRoomActive } from './room';
 import { siteApi } from './site-api';
 
 import { api } from '/@/renderer/api';
+import { usePlayer } from '/@/renderer/features/player/context/player-context';
 import { useAuthStore, usePlayerSong } from '/@/renderer/store';
 import { usePlayerStoreBase } from '/@/renderer/store/player.store';
 import { useTimestampStoreBase } from '/@/renderer/store/timestamp.store';
@@ -29,6 +30,7 @@ import { Textarea } from '/@/shared/components/textarea/textarea';
 type Comment = Quote & {
     canDelete: boolean;
     createdAt: string;
+    hasReplies: boolean;
     liked: boolean;
     likes: number;
     parent: null | Quote;
@@ -40,7 +42,8 @@ type Discussion = {
     comments: Comment[];
     favoriteCount?: number;
     next?: null | number;
-    people?: { id: string; name: string }[];
+    publicCount?: number;
+    root?: number;
 };
 type Props = {
     actions?: ReactNode;
@@ -60,22 +63,45 @@ export function DiscussionPanel(props: Props) {
     );
 }
 
+export function useDiscussionCount(songId?: string) {
+    const server = useAuthStore((state) => state.currentServer);
+    const query = useQuery({
+        enabled: window.SERVER_NAME === 'ndFork' && Boolean(server && songId),
+        queryFn: () =>
+            siteApi.request<{ count: number }>(
+                `/site/discussion/song/${encodeURIComponent(songId!)}/count`,
+            ),
+        queryKey: ['site', 'discussion-count', server?.id, server?.userId, songId],
+        staleTime: 30_000,
+    });
+    return query.data?.count;
+}
+
 function Discussion({ actions, children, id, kind, player }: Props) {
     const { i18n, t } = useTranslation();
     const server = useAuthStore((state) => state.currentServer);
     const client = useQueryClient();
+    const playback = usePlayer();
     const current = usePlayerSong();
     const shared = useRoomActive();
     const heading = useId();
     const input = useRef<HTMLTextAreaElement>(null);
     const items = useRef(new Map<number, HTMLElement>());
     const [body, setBody] = useState('');
+    const [now, setNow] = useState(Date.now);
     const [preview, setPreview] = useState(false);
     const [reply, setReply] = useState<Comment | null>(null);
+    const [editing, setEditing] = useState<Comment | null>(null);
+    const [reporting, setReporting] = useState<Comment | null>(null);
+    const [reason, setReason] = useState('');
     const [deleting, setDeleting] = useState<Comment | null>(null);
-    const [anchor, setAnchor] = useState<Comment | null>(null);
+    const [anchor, setAnchor] = useState<null | { comment: Comment; root: number }>(null);
+    const [expanded, setExpanded] = useState<number>();
+    const [ordering, setOrdering] = useState<'hot' | 'latest' | 'timed'>('latest');
     const [highlight, setHighlight] = useState<number>();
     const [busy, setBusy] = useState<string>();
+    const likesInFlight = useRef(new Set<number>());
+    const [pendingLikes, setPendingLikes] = useState<Set<number>>(new Set());
     const [composerError, setComposerError] = useState('');
     const [notice, setNotice] = useState<{ error: boolean; text: string }>();
     const [position, setPosition] = useState<number>();
@@ -86,23 +112,83 @@ function Discussion({ actions, children, id, kind, player }: Props) {
     const path = `/site/discussion/${kind}/${encodeURIComponent(id)}`;
     const key = ['site', 'discussion', server?.id, server?.userId, kind, id];
     const query = useInfiniteQuery({
-        getNextPageParam: (last) => last.next ?? undefined,
+        getNextPageParam: (last: Discussion) => last.next ?? undefined,
+        initialPageParam: 0,
+        queryFn: ({ pageParam }): Promise<Discussion> =>
+            siteApi.request(
+                `${path}?${ordering === 'hot' ? `sort=hot&offset=${pageParam}` : `${ordering === 'timed' ? 'timed=1&' : ''}${pageParam ? `before=${pageParam}` : ''}`}`,
+            ),
+        queryKey: [...key, ordering],
+    });
+    const comments = [
+        ...new Map(
+            query.data?.pages
+                .flatMap((page) => page.comments)
+                .map((comment) => [comment.id, comment]),
+        ).values(),
+    ];
+    const first = query.data?.pages[0];
+    const threadId = anchor?.root ?? expanded;
+    const thread = useInfiniteQuery({
+        enabled: Boolean(threadId),
+        getNextPageParam: (last: Discussion) => last.next ?? undefined,
+        initialPageParam: 0,
+        queryFn: ({ pageParam }): Promise<Discussion> =>
+            siteApi.request(`${path}?thread=${threadId}&offset=${pageParam}`),
+        queryKey: [...key, 'thread', threadId],
+    });
+    const root = useInfiniteQuery({
+        enabled: Boolean(anchor?.root),
+        getNextPageParam: () => undefined,
+        initialPageParam: 0,
+        queryFn: (): Promise<Discussion> => siteApi.request(`${path}?comment=${anchor?.root}`),
+        queryKey: [...key, 'root', anchor?.root],
+    });
+    const people = useInfiniteQuery({
+        enabled: showPeople,
+        getNextPageParam: (last: {
+            next?: null | number;
+            people: { id: string; name: string }[];
+        }) => last.next ?? undefined,
         initialPageParam: 0,
         queryFn: ({ pageParam }) =>
-            siteApi.request<Discussion>(`${path}${pageParam ? `?before=${pageParam}` : ''}`),
-        queryKey: key,
+            siteApi.request<{ next?: null | number; people: { id: string; name: string }[] }>(
+                `${path}/people?offset=${pageParam}`,
+            ),
+        queryKey: [...key, 'people'],
     });
-    const comments = query.data?.pages.flatMap((page) => page.comments) ?? [];
-    const first = query.data?.pages[0];
     const canAttach = kind === 'song' && current?.id === id;
     const length = Array.from(body).length;
     const date = new Intl.DateTimeFormat(i18n.resolvedLanguage, {
         dateStyle: 'medium',
         timeStyle: 'short',
     });
+    const relative = new Intl.RelativeTimeFormat(i18n.resolvedLanguage, { numeric: 'auto' });
+    const [published, setPublished] = useState<number>();
+    const operations = useRef(new Set<string>());
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+        return () => window.clearInterval(timer);
+    }, []);
+    useEffect(() => {
+        if (highlight === undefined) return;
+        const timer = window.setTimeout(() => setHighlight(undefined), 2500);
+        return () => window.clearTimeout(timer);
+    }, [highlight]);
+    useEffect(() => {
+        if (published === undefined) return;
+        const element = items.current.get(published);
+        if (!element) return;
+        element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        setHighlight(published);
+        setPublished(undefined);
+    }, [published, query.data, thread.data]);
 
     const act = async (operation: string, run: () => Promise<unknown>, done?: () => void) => {
-        setBusy(operation);
+        if (operations.current.has(operation)) return;
+        operations.current.add(operation);
+        const composer = operation === 'post';
+        if (composer || operation === 'delete' || operation === 'report') setBusy(operation);
         setNotice(undefined);
         if (operation === 'post') setComposerError('');
         try {
@@ -113,19 +199,100 @@ function Discussion({ actions, children, id, kind, player }: Props) {
             if (operation === 'post') setComposerError(message);
             else setNotice({ error: true, text: message });
         } finally {
-            setBusy(undefined);
+            operations.current.delete(operation);
+            setBusy((current) => (current === operation ? undefined : current));
         }
     };
-    const refresh = () => client.invalidateQueries({ queryKey: key });
+    const refresh = () => {
+        void client.invalidateQueries({
+            queryKey: ['site', 'discussion-count', server?.id, server?.userId, id],
+        });
+        return client.invalidateQueries({ queryKey: key });
+    };
+    const patchLike = (comment: Comment, liked: boolean, count: number) => {
+        client.setQueriesData<InfiniteData<Discussion>>(
+            { queryKey: key },
+            (data) =>
+                data && {
+                    ...data,
+                    pages: data.pages.map((page) =>
+                        !page.comments
+                            ? page
+                            : {
+                                  ...page,
+                                  comments: page.comments.map((item) =>
+                                      item.id === comment.id
+                                          ? { ...item, liked, likes: count }
+                                          : item,
+                                  ),
+                              },
+                    ),
+                },
+        );
+        setAnchor((current) =>
+            current?.comment.id === comment.id
+                ? { ...current, comment: { ...current.comment, liked, likes: count } }
+                : current,
+        );
+    };
+    const like = async (comment: Comment) => {
+        if (likesInFlight.current.has(comment.id)) return;
+        likesInFlight.current.add(comment.id);
+        setPendingLikes(new Set(likesInFlight.current));
+        patchLike(comment, !comment.liked, comment.likes + (comment.liked ? -1 : 1));
+        try {
+            const result = await siteApi.request<{ liked: boolean; likes: number }>(
+                `/site/comment/${comment.id}/like`,
+                { liked: !comment.liked },
+                'PUT',
+            );
+            patchLike(comment, result.liked, result.likes);
+        } catch (error) {
+            patchLike(comment, comment.liked, comment.likes);
+            setNotice({ error: true, text: (error as Error).message });
+        } finally {
+            likesInFlight.current.delete(comment.id);
+            setPendingLikes(new Set(likesInFlight.current));
+        }
+    };
     const publish = () => {
         if (busy || !body.trim() || length > limit) return;
         void act(
             'post',
-            () => siteApi.request(path, { body, parentId: reply?.id, position }),
+            async () => {
+                if (editing) {
+                    await siteApi.request(`/site/comment/${editing.id}`, { body }, 'PUT');
+                    setPublished(editing.id);
+                    return;
+                }
+                const posted = await siteApi.request<{ id: number }>(path, {
+                    body,
+                    parentId: reply?.id,
+                    position,
+                });
+                if (reply) {
+                    const result = await siteApi
+                        .request<Discussion>(`${path}?comment=${posted.id}`)
+                        .catch(() => undefined);
+                    if (result?.root && result.comments[0]) {
+                        if (items.current.has(result.root) && !thread.hasNextPage) {
+                            setExpanded(result.root);
+                            setPublished(posted.id);
+                        } else {
+                            setAnchor({ comment: result.comments[0], root: result.root });
+                            setHighlight(posted.id);
+                        }
+                    }
+                } else {
+                    setOrdering('latest');
+                    setPublished(posted.id);
+                }
+            },
             () => {
                 setBody('');
                 setPreview(false);
                 setReply(null);
+                setEditing(null);
                 setPosition(undefined);
                 setNotice({ error: false, text: t('discussion.posted') });
                 void refresh();
@@ -152,7 +319,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
             void act('quote', async () => {
                 const result = await siteApi.request<Discussion>(`${path}?comment=${quote.id}`);
                 if (!result.comments[0]) throw new Error(t('discussion.quoteUnavailable'));
-                setAnchor(result.comments[0]);
+                setAnchor({ comment: result.comments[0], root: result.root ?? quote.id });
             });
         }
     };
@@ -167,17 +334,11 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                 query: { id },
             });
             if (isRoomActive()) throw new Error(t('discussion.sharedSeek'));
-            usePlayerStoreBase.getState().setQueue([song], 0, time);
-            usePlayerStoreBase.getState().mediaSeekToTimestamp(time);
+            playback.setQueue([song], 0, time);
         });
     };
     const renderQuote = (quote: Quote) => (
-        <button
-            className={styles.quote}
-            disabled={Boolean(busy)}
-            onClick={() => locate(quote)}
-            type="button"
-        >
+        <button className={styles.quote} onClick={() => locate(quote)} type="button">
             <span className={styles.quoteName}>
                 {quote.deleted ? t('site.deleted') : quote.name || t('discussion.formerUser')}
             </span>
@@ -191,6 +352,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
     const renderCard = (comment: Comment, inDialog = false) => {
         const name = comment.name || t('discussion.formerUser');
         const created = new Date(comment.createdAt);
+        const minutes = Math.max(0, Math.floor((now - created.valueOf()) / 60000));
         const foreignSong = shared && current?.id !== id;
         return (
             <article
@@ -226,10 +388,19 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                         ) : (
                             <span className={styles.author}>{name}</span>
                         )}
-                        <time dateTime={comment.createdAt}>
+                        <time
+                            dateTime={comment.createdAt}
+                            title={
+                                Number.isNaN(created.valueOf()) ? undefined : date.format(created)
+                            }
+                        >
                             {Number.isNaN(created.valueOf())
                                 ? comment.createdAt
-                                : date.format(created)}
+                                : minutes >= 0 && minutes < 60
+                                  ? relative.format(-minutes, 'minute')
+                                  : minutes >= 60 && minutes < 1440
+                                    ? relative.format(-Math.floor(minutes / 60), 'hour')
+                                    : date.format(created)}
                         </time>
                     </div>
                     {comment.parent && renderQuote(comment.parent)}
@@ -244,7 +415,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                         <Group gap="xs" wrap="wrap">
                             {comment.position != null && (
                                 <Button
-                                    disabled={Boolean(busy) || foreignSong}
+                                    disabled={busy === 'seek' || foreignSong}
                                     leftSection={<Icon icon="duration" size="xs" />}
                                     onClick={() => jump(comment.position!)}
                                     size="compact-sm"
@@ -263,7 +434,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                             <Button
                                 aria-label={t(comment.liked ? 'discussion.unlike' : 'site.like')}
                                 aria-pressed={comment.liked}
-                                disabled={Boolean(busy)}
+                                disabled={pendingLikes.has(comment.id)}
                                 leftSection={
                                     <Icon
                                         fill={comment.liked ? 'primary' : 'default'}
@@ -271,18 +442,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                                         size="sm"
                                     />
                                 }
-                                onClick={() =>
-                                    void act(
-                                        `like-${comment.id}`,
-                                        () =>
-                                            siteApi.request(
-                                                `/site/comment/${comment.id}/like`,
-                                                { liked: !comment.liked },
-                                                'PUT',
-                                            ),
-                                        () => void refresh(),
-                                    )
-                                }
+                                onClick={() => void like(comment)}
                                 size="compact-sm"
                                 variant={comment.liked ? 'light' : 'subtle'}
                             >
@@ -292,6 +452,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                                 onClick={() => {
                                     setAnchor(null);
                                     setPreview(false);
+                                    setEditing(null);
                                     setReply(comment);
                                     requestAnimationFrame(() => input.current?.focus());
                                 }}
@@ -303,7 +464,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                         </Group>
                     )}
                 </div>
-                {comment.canDelete && !comment.deleted && (
+                {!comment.deleted && (
                     <Popover
                         onChange={(open) => setMenu(open ? comment.id : undefined)}
                         opened={menu === comment.id}
@@ -321,17 +482,48 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                             />
                         </Popover.Target>
                         <Popover.Dropdown>
-                            <Button
-                                color="red"
-                                onClick={() => {
-                                    setMenu(undefined);
-                                    setDeleting(comment);
-                                }}
-                                size="compact-sm"
-                                variant="subtle"
-                            >
-                                {t('site.delete')}
-                            </Button>
+                            {comment.userId === server?.userId ? (
+                                <Button
+                                    onClick={() => {
+                                        setMenu(undefined);
+                                        setAnchor(null);
+                                        setEditing(comment);
+                                        setReply(null);
+                                        setPreview(false);
+                                        setBody(comment.body);
+                                        requestAnimationFrame(() => input.current?.focus());
+                                    }}
+                                    size="compact-sm"
+                                    variant="subtle"
+                                >
+                                    {t('common.edit')}
+                                </Button>
+                            ) : (
+                                <Button
+                                    onClick={() => {
+                                        setMenu(undefined);
+                                        setReason('');
+                                        setReporting(comment);
+                                    }}
+                                    size="compact-sm"
+                                    variant="subtle"
+                                >
+                                    {t('discussion.report')}
+                                </Button>
+                            )}
+                            {comment.canDelete && (
+                                <Button
+                                    color="red"
+                                    onClick={() => {
+                                        setMenu(undefined);
+                                        setDeleting(comment);
+                                    }}
+                                    size="compact-sm"
+                                    variant="subtle"
+                                >
+                                    {t('site.delete')}
+                                </Button>
+                            )}
                         </Popover.Dropdown>
                     </Popover>
                 )}
@@ -339,6 +531,28 @@ function Discussion({ actions, children, id, kind, player }: Props) {
         );
     };
     const modalHandlers = (close: () => void) => ({ close, open: () => undefined, toggle: close });
+    const threadItems = thread.data?.pages.flatMap((page) => page.comments) ?? [];
+    const renderThread = (dialog = false) => (
+        <Stack className={styles.thread} gap="xs">
+            {thread.isPending && <Skeleton height={42} />}
+            {thread.isError && (
+                <Button onClick={() => void thread.refetch()}>{t('discussion.retry')}</Button>
+            )}
+            {threadItems
+                .filter((comment) => !dialog || comment.id !== anchor?.comment.id)
+                .map((comment) => renderCard(comment, dialog))}
+            {thread.hasNextPage && (
+                <Button
+                    loading={thread.isFetchingNextPage}
+                    onClick={() => void thread.fetchNextPage()}
+                    size="compact-sm"
+                    variant="subtle"
+                >
+                    {t('site.more')}
+                </Button>
+            )}
+        </Stack>
+    );
     return (
         <section
             aria-labelledby={heading}
@@ -365,6 +579,20 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     {Array.from(server?.username ?? '?')[0]?.toLocaleUpperCase()}
                 </span>
                 <Stack className={styles.content} gap="xs">
+                    {editing && (
+                        <Group gap="xs">
+                            <Text size="sm">{t('common.edit')}</Text>
+                            <ActionIcon
+                                aria-label={t('site.cancel')}
+                                icon="x"
+                                onClick={() => {
+                                    setEditing(null);
+                                    setBody('');
+                                }}
+                                variant="subtle"
+                            />
+                        </Group>
+                    )}
                     {reply && (
                         <Group justify="space-between" wrap="nowrap">
                             <Text size="sm" truncate>
@@ -412,12 +640,22 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                             maxRows={7}
                             minRows={2}
                             onChange={(event) => setBody(event.currentTarget.value)}
+                            onKeyDown={(event) => {
+                                if (
+                                    event.key === 'Enter' &&
+                                    (event.ctrlKey || event.metaKey) &&
+                                    !event.nativeEvent.isComposing
+                                ) {
+                                    event.preventDefault();
+                                    publish();
+                                }
+                            }}
                             placeholder={t('site.writeComment')}
                             ref={input}
                             value={body}
                         />
                     </div>
-                    {preview && (
+                    {(preview || body.includes('(')) && (
                         <div className={styles.preview}>
                             {body.trim() ? (
                                 <EmojiText index={emojiIndex} text={body} />
@@ -435,7 +673,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     )}
                     <div className={styles.composeActions}>
                         <Group gap="xs">
-                            {(canAttach || position != null) && (
+                            {!editing && (canAttach || position != null) && (
                                 <Checkbox
                                     checked={position != null}
                                     label={
@@ -453,6 +691,17 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                                     size="xs"
                                 />
                             )}
+                            {!editing && canAttach && position != null && (
+                                <Button
+                                    onClick={() =>
+                                        setPosition(useTimestampStoreBase.getState().timestamp)
+                                    }
+                                    size="compact-xs"
+                                    variant="subtle"
+                                >
+                                    {t('discussion.captureTime')}
+                                </Button>
+                            )}
                         </Group>
                         <Group gap="sm" wrap="nowrap">
                             {length > 0 && (
@@ -466,7 +715,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                                 size="compact-sm"
                                 type="submit"
                             >
-                                {t(reply ? 'site.reply' : 'site.publish')}
+                                {t(editing ? 'common.save' : reply ? 'site.reply' : 'site.publish')}
                             </Button>
                         </Group>
                     </div>
@@ -482,12 +731,28 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                 </Text>
             )}
             <div className={styles.listHeader}>
-                <Text fw={600} size="sm">
-                    {t('discussion.latest')}
-                </Text>
+                <Group gap={4}>
+                    {(kind === 'song'
+                        ? (['latest', 'hot', 'timed'] as const)
+                        : (['latest', 'hot'] as const)
+                    ).map((item) => (
+                        <Button
+                            aria-pressed={ordering === item}
+                            key={item}
+                            onClick={() => {
+                                setOrdering(item);
+                                setExpanded(undefined);
+                            }}
+                            size="compact-sm"
+                            variant={ordering === item ? 'light' : 'subtle'}
+                        >
+                            {t(`discussion.${item}`)}
+                        </Button>
+                    ))}
+                </Group>
                 {!player && Boolean(first?.favoriteCount) && (
                     <Button
-                        disabled={!first?.people?.length}
+                        disabled={!first?.publicCount}
                         leftSection={<Icon icon="favorite" size="xs" />}
                         onClick={() => setShowPeople(true)}
                         size="compact-xs"
@@ -524,7 +789,24 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     </Text>
                 </Stack>
             )}
-            {comments.map((comment) => renderCard(comment))}
+            {comments.map((comment) => (
+                <div key={comment.id}>
+                    {renderCard(comment)}
+                    {comment.hasReplies && ordering !== 'timed' && (
+                        <Button
+                            aria-expanded={expanded === comment.id}
+                            onClick={() =>
+                                setExpanded(expanded === comment.id ? undefined : comment.id)
+                            }
+                            size="compact-sm"
+                            variant="subtle"
+                        >
+                            {t('discussion.replies')}
+                        </Button>
+                    )}
+                    {expanded === comment.id && !anchor && renderThread()}
+                </div>
+            ))}
             {query.hasNextPage && (
                 <Button
                     loading={query.isFetchingNextPage}
@@ -580,7 +862,11 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     opened
                     title={t('discussion.original')}
                 >
-                    {renderCard(anchor, true)}
+                    {root.data?.pages[0]?.comments[0] &&
+                        anchor.root !== anchor.comment.id &&
+                        renderCard(root.data.pages[0].comments[0], true)}
+                    {renderCard(anchor.comment, true)}
+                    {renderThread(true)}
                 </Modal>
             )}
             {showPeople && (
@@ -590,19 +876,76 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     title={t('site.favoriteCount', { count: first?.favoriteCount })}
                 >
                     <Group gap="xs">
-                        {first?.people?.map((person) => (
-                            <Button
-                                component={Link}
-                                key={person.id}
-                                onClick={() => setShowPeople(false)}
-                                size="compact-sm"
-                                to={`/community/profile/${person.id}`}
-                                variant="light"
-                            >
-                                {person.name}
-                            </Button>
-                        ))}
+                        {people.data?.pages
+                            .flatMap((page) => page.people)
+                            .map((person) => (
+                                <Button
+                                    component={Link}
+                                    key={person.id}
+                                    onClick={() => setShowPeople(false)}
+                                    size="compact-sm"
+                                    to={`/community/profile/${person.id}`}
+                                    variant="light"
+                                >
+                                    {person.name}
+                                </Button>
+                            ))}
                     </Group>
+                    {people.isPending && <Skeleton height={32} />}
+                    {people.isError && (
+                        <Button onClick={() => void people.refetch()}>
+                            {t('discussion.retry')}
+                        </Button>
+                    )}
+                    {people.hasNextPage && (
+                        <Button
+                            loading={people.isFetchingNextPage}
+                            onClick={() => void people.fetchNextPage()}
+                            variant="subtle"
+                        >
+                            {t('site.more')}
+                        </Button>
+                    )}
+                </Modal>
+            )}
+            {reporting && (
+                <Modal
+                    handlers={modalHandlers(() => setReporting(null))}
+                    opened
+                    title={t('discussion.report')}
+                >
+                    <Stack>
+                        <Textarea
+                            label={t('discussion.reason')}
+                            maxLength={500}
+                            onChange={(event) => setReason(event.currentTarget.value)}
+                            value={reason}
+                        />
+                        {notice?.error && busy !== 'report' && (
+                            <Text c="red" role="alert">
+                                {notice.text}
+                            </Text>
+                        )}
+                        <Button
+                            disabled={!reason.trim()}
+                            loading={busy === 'report'}
+                            onClick={() =>
+                                void act(
+                                    'report',
+                                    () =>
+                                        siteApi.request(`/site/comment/${reporting.id}/report`, {
+                                            reason,
+                                        }),
+                                    () => {
+                                        setReporting(null);
+                                        setNotice({ error: false, text: t('discussion.reported') });
+                                    },
+                                )
+                            }
+                        >
+                            {t('discussion.report')}
+                        </Button>
+                    </Stack>
                 </Modal>
             )}
         </section>
