@@ -1370,7 +1370,7 @@ const initialState: SettingsState = {
             sidebar: 400,
             table: 80,
         },
-        language: 'en',
+        language: 'zh-Hans',
         lastFM: true,
         lastfmApiKey: '',
         listenBrainz: true,

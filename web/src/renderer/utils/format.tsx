@@ -1,34 +1,9 @@
 import type { Album, AlbumArtist, Song } from '/@/shared/types/domain-types';
 
 import dayjs from 'dayjs';
-import 'dayjs/locale/ar';
-import 'dayjs/locale/ca';
-import 'dayjs/locale/cs';
-import 'dayjs/locale/de';
 import 'dayjs/locale/en';
-import 'dayjs/locale/es';
-import 'dayjs/locale/eu';
-import 'dayjs/locale/fa';
-import 'dayjs/locale/fi';
-import 'dayjs/locale/fr';
-import 'dayjs/locale/hu';
-import 'dayjs/locale/id';
-import 'dayjs/locale/it';
 import 'dayjs/locale/ja';
-import 'dayjs/locale/ko';
-import 'dayjs/locale/nb';
-import 'dayjs/locale/nl';
-import 'dayjs/locale/pl';
-import 'dayjs/locale/pt';
-import 'dayjs/locale/pt-br';
-import 'dayjs/locale/ru';
-import 'dayjs/locale/sl';
-import 'dayjs/locale/sr';
-import 'dayjs/locale/sv';
-import 'dayjs/locale/ta';
-import 'dayjs/locale/tr';
 import 'dayjs/locale/zh-cn';
-import 'dayjs/locale/zh-tw';
 import localizedFormat from 'dayjs/plugin/localizedFormat';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
@@ -43,44 +18,18 @@ dayjs.extend(localizedFormat);
 
 const getDayjsLocale = (i18nLang: string): string => {
     const localeMap: Record<string, string> = {
-        ar: 'ar',
-        ca: 'ca',
-        cs: 'cs',
-        de: 'de',
         en: 'en',
-        es: 'es',
-        eu: 'eu',
-        fa: 'fa',
-        fi: 'fi',
-        fr: 'fr',
-        hu: 'hu',
-        id: 'id',
-        it: 'it',
         ja: 'ja',
-        ko: 'ko',
-        'nb-NO': 'nb',
-        nl: 'nl',
-        pl: 'pl',
-        pt: 'pt',
-        'pt-BR': 'pt-br',
-        ru: 'ru',
-        sl: 'sl',
-        sr: 'sr',
-        sv: 'sv',
-        ta: 'ta',
-        tr: 'tr',
         'zh-Hans': 'zh-cn',
-        'zh-Hant': 'zh-tw',
     };
 
-    return localeMap[i18nLang] || 'en';
+    return localeMap[i18nLang] || 'zh-cn';
 };
 
 // BCP 47 tags for Intl (differs from dayjs locale ids for some languages).
 const getIntlLocale = (i18nLang: string): string => {
     const localeMap: Record<string, string> = {
         'zh-Hans': 'zh-CN',
-        'zh-Hant': 'zh-TW',
     };
 
     return localeMap[i18nLang] ?? i18nLang;
