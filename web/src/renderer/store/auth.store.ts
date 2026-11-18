@@ -12,7 +12,7 @@ export interface AuthSlice extends AuthState {
         addServer: (args: ServerListItemWithCredential) => void;
         deleteServer: (id: string) => void;
         getServer: (id: string) => null | ServerListItemWithCredential;
-        logout: () => void;
+        logout: (promptOfflineCleanup?: boolean) => void;
         setCurrentServer: (server: null | ServerListItemWithCredential) => void;
         setMusicFolderId: (musicFolderId: string[] | undefined) => void;
         updateServer: (id: string, args: Partial<ServerListItemWithCredential>) => void;
@@ -49,7 +49,29 @@ export const useAuthStore = createWithEqualityFn<AuthSlice>()(
                         if (server) return server;
                         return null;
                     },
-                    logout: () => {
+                    logout: (promptOfflineCleanup = true) => {
+                        if (window.SERVER_NAME === 'ndFork') {
+                            const owner = get().currentServer;
+                            void import('/@/renderer/features/site/offline').then(
+                                async (offline) => {
+                                    if (!promptOfflineCleanup || !owner?.userId) return;
+                                    const key = encodeURIComponent(`${owner.url}|${owner.userId}`);
+                                    await offline.clearOfflineOwner(
+                                        key,
+                                        confirm(
+                                            (await import('/@/i18n/i18n')).default.t(
+                                                'site.clearOfflineOnLogout',
+                                            ),
+                                        ),
+                                    );
+                                },
+                            );
+                            sessionStorage.setItem('ndfork-signed-out', '1');
+                            void fetch(`${window.SERVER_URL}/auth/logout`, {
+                                credentials: 'include',
+                                method: 'POST',
+                            });
+                        }
                         set((state) => {
                             const currentServer = state.currentServer;
                             if (!currentServer) {

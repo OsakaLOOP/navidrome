@@ -4,11 +4,25 @@ import { shallow } from 'zustand/shallow';
 
 import { normalizeServerUrl } from '/@/renderer/features/action-required/utils/server-lock';
 import { isServerLock } from '/@/renderer/features/action-required/utils/window-properties';
+import { RoomBridge } from '/@/renderer/features/site/room';
+import { renewSiteSession } from '/@/renderer/features/site/site-api';
 import { AppRoute } from '/@/renderer/router/routes';
 import { useAuthStore, useAuthStoreActions } from '/@/renderer/store';
 import { ServerType } from '/@/shared/types/domain-types';
 
 export const AppOutlet = () => {
+    useEffect(() => {
+        if (window.SERVER_NAME !== 'ndFork') return;
+        const timer = setInterval(
+            () => {
+                void renewSiteSession().catch(() =>
+                    useAuthStore.getState().actions.setCurrentServer(null),
+                );
+            },
+            5 * 60 * 1000,
+        );
+        return () => clearInterval(timer);
+    }, []);
     const currentServer = useAuthStore(
         (state) =>
             state.currentServer
@@ -63,5 +77,10 @@ export const AppOutlet = () => {
         return <Navigate replace to={AppRoute.ACTION_REQUIRED} />;
     }
 
-    return <Outlet />;
+    return (
+        <>
+            <RoomBridge />
+            <Outlet />
+        </>
+    );
 };

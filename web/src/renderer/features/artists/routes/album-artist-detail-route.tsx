@@ -17,6 +17,7 @@ import {
 import { LibraryContainer } from '/@/renderer/features/shared/components/library-container';
 import { LibraryHeaderBar } from '/@/renderer/features/shared/components/library-header-bar';
 import { PageErrorBoundary } from '/@/renderer/features/shared/components/page-error-boundary';
+import { EntityPanel } from '/@/renderer/features/site/entity-panel';
 import { useFastAverageColor } from '/@/renderer/hooks';
 import { useArtistBackground, useCurrentServer, useCurrentServerId } from '/@/renderer/store';
 import { Spinner } from '/@/shared/components/spinner/spinner';
@@ -121,6 +122,7 @@ const AlbumArtistDetailRouteContent = () => {
                         ref={headerRef as React.Ref<HTMLDivElement>}
                     />
                     <AlbumArtistDetailContent albumsQuery={albumsQuery} detailQuery={detailQuery} />
+                    <EntityPanel id={routeId} key={routeId} kind="artist" />
                 </LibraryContainer>
             </NativeScrollArea>
         </AnimatedPage>

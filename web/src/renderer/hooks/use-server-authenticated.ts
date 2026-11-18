@@ -53,19 +53,34 @@ export const useServerAuthenticated = () => {
 
     const authenticateServer = useCallback(
         async (serverWithAuth: NonNullable<ReturnType<typeof getServerById>>, retryAttempt = 0) => {
+            if (window.SERVER_NAME === 'ndFork' && !navigator.onLine) {
+                const { loadOffline } = await import('/@/renderer/features/site/offline');
+                await loadOffline();
+                setReady(AuthState.VALID);
+                navigateRef.current('/offline', { replace: true });
+                return;
+            }
             const authStartTime = Date.now();
 
             try {
                 setReady(AuthState.LOADING);
 
                 // Use userId if available, otherwise fall back to username (for Subsonic/Navidrome)
-                const userId = serverWithAuth.userId || serverWithAuth.username;
+                let userId = serverWithAuth.userId || serverWithAuth.username;
 
                 if (!userId) {
                     throw new Error('No user ID or username available');
                 }
 
                 // First, try getUserInfo to check if current credentials are still valid
+                if (window.SERVER_NAME === 'ndFork') {
+                    const { acceptSiteAuth, restoreSiteSession } =
+                        await import('/@/renderer/features/site/site-api');
+                    const session = await restoreSiteSession();
+                    acceptSiteAuth(session);
+                    serverWithAuth = getServerById(serverWithAuth.id)!;
+                    userId = serverWithAuth.userId || serverWithAuth.username;
+                }
                 logger.info('Authenticating server', {
                     method: 'getUserInfo',
                     serverId: serverWithAuth.id,
@@ -254,6 +269,12 @@ export const useServerAuthenticated = () => {
                     throw getUserInfoError;
                 }
             } catch (error) {
+                if (
+                    window.SERVER_NAME === 'ndFork' &&
+                    getServerById(serverWithAuth.id)?.userId !== serverWithAuth.userId
+                ) {
+                    return;
+                }
                 const errorMessage = (error as Error).message || 'Authentication failed';
                 const isNetwork = isNetworkError(error);
 

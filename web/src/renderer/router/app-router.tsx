@@ -16,6 +16,14 @@ const NowPlayingRoute = lazy(
     () => import('/@/renderer/features/now-playing/routes/now-playing-route'),
 );
 
+const RoomPage = lazy(() => import('/@/renderer/features/site/room'));
+const OfflinePage = lazy(() => import('/@/renderer/features/site/offline-page'));
+const AccountPage = lazy(() => import('/@/renderer/features/site/account-page'));
+const ProfilePage = lazy(() =>
+    import('/@/renderer/features/site/account-page').then((m) => ({ default: m.ProfilePage })),
+);
+const TrackPage = lazy(() => import('/@/renderer/features/site/track-page'));
+
 const AlbumListRoute = lazy(() => import('/@/renderer/features/albums/routes/album-list-route'));
 
 const SongListRoute = lazy(() => import('/@/renderer/features/songs/routes/song-list-route'));
@@ -228,6 +236,14 @@ export const AppRouter = () => {
                                 <Route element={<AppOutlet />}>
                                     <Route element={<ResponsiveLayout />}>
                                         <Route element={<HomeRoute />} index />
+                                        <Route element={<RoomPage />} path="/together" />
+                                        <Route element={<OfflinePage />} path="/offline" />
+                                        <Route element={<AccountPage />} path="/account" />
+                                        <Route
+                                            element={<ProfilePage />}
+                                            path="/community/profile/:userId"
+                                        />
+                                        <Route element={<TrackPage />} path="/track/:id" />
                                         <Route element={<HomeRoute />} path={AppRoute.HOME} />
                                         <Route element={<SearchRoute />} path={AppRoute.SEARCH} />
                                         <Route

@@ -355,9 +355,13 @@ const TIMEOUT_ERROR = Error();
 
 axiosClient.interceptors.response.use(
     (response) => {
-        const serverId = useAuthStore.getState().currentServer?.id;
+        const currentServer = useAuthStore.getState().currentServer;
+        const serverId = currentServer?.id;
 
-        if (serverId) {
+        if (
+            serverId &&
+            response.config.headers['x-nd-authorization'] === `Bearer ${currentServer.ndCredential}`
+        ) {
             const headerCredential = response.headers['x-nd-authorization'] as string | undefined;
 
             if (headerCredential) {
@@ -374,6 +378,14 @@ axiosClient.interceptors.response.use(
     (error) => {
         if (error.response && error.response.status === 401) {
             const currentServer = useAuthStore.getState().currentServer;
+
+            if (
+                window.SERVER_NAME === 'ndFork' &&
+                error.config?.headers['x-nd-authorization'] !==
+                    `Bearer ${currentServer?.ndCredential}`
+            ) {
+                return Promise.reject(error);
+            }
 
             if (localSettings && currentServer?.savePassword) {
                 return localSettings

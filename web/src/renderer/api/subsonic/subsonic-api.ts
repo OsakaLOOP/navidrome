@@ -397,7 +397,11 @@ axiosClient.interceptors.response.use(
             // Suppress code related to non-linked lastfm or spotify from Navidrome
             if (data['subsonic-response'].error.code !== 0) {
                 const currentServer = useAuthStore.getState().currentServer;
-                const isAuthenticated = Boolean(currentServer?.credential);
+                const isAuthenticated =
+                    Boolean(currentServer?.credential) &&
+                    (window.SERVER_NAME !== 'ndFork' ||
+                        response.config.headers['x-nd-authorization'] ===
+                            `Bearer ${currentServer?.ndCredential}`);
                 const errorCode = data['subsonic-response'].error.code;
                 const errorMessage = data['subsonic-response'].error.message as string | undefined;
                 // Servers may return code as string ("40") — coerce before comparing
@@ -499,18 +503,18 @@ export const ssApiClient = (args: {
             if (server) {
                 const serverUrl = getServerUrl(server, forceRemoteUrl);
                 baseUrl = serverUrl ? `${serverUrl}/rest` : undefined;
-                const token = server.credential;
-                const params = token.split(/&?\w=/gm);
-
-                authParams.u = decodeURIComponent(server.username);
-                if (params?.length === 4) {
-                    authParams.s = params[2];
-                    authParams.t = params[3];
-                } else if (params?.length === 3) {
-                    authParams.p = decodeURIComponent(params[2]);
+                const credentials = new URLSearchParams(server.credential);
+                authParams.u = credentials.get('u') ?? server.username;
+                for (const key of ['jwt', 's', 't', 'p']) {
+                    const value = credentials.get(key);
+                    if (value !== null) authParams[key] = value;
                 }
             } else {
                 baseUrl = url;
+            }
+
+            if (window.SERVER_NAME === 'ndFork' && server?.ndCredential) {
+                headers['x-nd-authorization'] = `Bearer ${server.ndCredential}`;
             }
 
             const request: AxiosRequestConfig = {

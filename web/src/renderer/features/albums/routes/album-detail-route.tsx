@@ -15,6 +15,7 @@ import {
 import { LibraryContainer } from '/@/renderer/features/shared/components/library-container';
 import { LibraryHeaderBar } from '/@/renderer/features/shared/components/library-header-bar';
 import { PageErrorBoundary } from '/@/renderer/features/shared/components/page-error-boundary';
+import { EntityPanel } from '/@/renderer/features/site/entity-panel';
 import { useFastAverageColor } from '/@/renderer/hooks';
 import { useAlbumBackground, useCurrentServerId } from '/@/renderer/store';
 import { LibraryItem } from '/@/shared/types/domain-types';
@@ -82,6 +83,7 @@ const AlbumDetailRoute = () => {
                 <LibraryContainer>
                     <AlbumDetailHeader ref={headerRef as React.Ref<HTMLDivElement>} />
                     <AlbumDetailContent />
+                    <EntityPanel id={albumId} key={albumId} kind="album" />
                 </LibraryContainer>
             </NativeScrollArea>
         </AnimatedPage>

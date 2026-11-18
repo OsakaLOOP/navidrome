@@ -11,6 +11,13 @@ const AUTH_FAILURE_TOAST_ID = 'auth-failure';
 
 export const authenticationFailure = (currentServer: null | ServerListItem, message?: string) => {
     const store = useAuthStore.getState();
+    if (
+        window.SERVER_NAME === 'ndFork' &&
+        currentServer?.ndCredential &&
+        currentServer.ndCredential !== store.currentServer?.ndCredential
+    ) {
+        return;
+    }
     const serverId = currentServer?.id ?? store.currentServer?.id;
 
     toast.error({
@@ -30,7 +37,7 @@ export const authenticationFailure = (currentServer: null | ServerListItem, mess
     // logout() clears credentials on the server list entry and sets currentServer to null.
     // If there is no current server, still clear the matching server list entry.
     if (store.currentServer) {
-        store.actions.logout();
+        store.actions.logout(false);
     } else {
         store.actions.updateServer(serverId, {
             credential: '',

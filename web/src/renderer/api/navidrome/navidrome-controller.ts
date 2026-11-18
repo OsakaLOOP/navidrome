@@ -164,7 +164,7 @@ export const NavidromeController: InternalControllerEndpoint = {
         }
 
         return {
-            credential: `u=${body.username}&s=${res.body.data.subsonicSalt}&t=${res.body.data.subsonicToken}`,
+            credential: `u=${encodeURIComponent(res.body.data.username)}&s=${res.body.data.subsonicSalt}&t=${res.body.data.subsonicToken}`,
             isAdmin: Boolean(res.body.data.isAdmin),
             ndCredential: res.body.data.token,
             userId: res.body.data.id,
@@ -958,6 +958,13 @@ export const NavidromeController: InternalControllerEndpoint = {
             `/media/stream/${parts.join('/')}`,
         );
         ['id', 'format', 'maxBitRate', '_'].forEach((key) => resolved.searchParams.delete(key));
+        if (window.SERVER_NAME === 'ndFork') {
+            const { siteApi } = await import('/@/renderer/features/site/site-api');
+            const result = await siteApi.request<{ url: string }>(
+                `/site/media/stream/${parts.join('/')}?resolve=1`,
+            );
+            return result.url;
+        }
         return resolved.href;
     },
     getStructuredLyrics: SubsonicController.getStructuredLyrics,

@@ -26,6 +26,7 @@ import {
 import { useJellyfinQuickConnect } from '/@/renderer/features/servers/hooks/use-jellyfin-quick-connect';
 import { AnimatedPage } from '/@/renderer/features/shared/components/animated-page';
 import { PageErrorBoundary } from '/@/renderer/features/shared/components/page-error-boundary';
+import { SiteLogin } from '/@/renderer/features/site/site-login';
 import { AppRoute } from '/@/renderer/router/routes';
 import {
     getServerById,
@@ -388,7 +389,7 @@ const LoginRoute = () => {
 const LoginRouteWithBoundary = () => {
     return (
         <PageErrorBoundary>
-            <LoginRoute />
+            {window.SERVER_NAME === 'ndFork' ? <SiteLogin /> : <LoginRoute />}
         </PageErrorBoundary>
     );
 };

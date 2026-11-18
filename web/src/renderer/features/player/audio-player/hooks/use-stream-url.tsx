@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
 import { api } from '/@/renderer/api';
+import { offlineSongUrl } from '/@/renderer/features/site/offline';
 import { TranscodingConfig } from '/@/renderer/store';
 import { QueueSong } from '/@/shared/types/domain-types';
 
@@ -17,7 +18,9 @@ export function useSongUrl(
 
     const { data: queryStreamUrl } = useQuery({
         enabled: Boolean(song?._serverId) && !shouldReusePrior,
-        queryFn: () =>
+        networkMode: 'always',
+        queryFn: async () =>
+            (await offlineSongUrl(song!)) ||
             api.controller.getStreamUrl({
                 apiClientProps: { serverId: song!._serverId },
                 query: {
@@ -72,6 +75,8 @@ export const getSongUrl = async (
     forRenderer?: boolean,
     startTime?: number,
 ) => {
+    const offline = await offlineSongUrl(song);
+    if (offline) return offline;
     const url = await api.controller.getStreamUrl({
         apiClientProps: { serverId: song._serverId },
         query: {

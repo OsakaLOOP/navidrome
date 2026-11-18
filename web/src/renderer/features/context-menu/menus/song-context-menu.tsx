@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { AddToPlaylistAction } from '/@/renderer/features/context-menu/actions/add-to-playlist-action';
 import { DownloadAction } from '/@/renderer/features/context-menu/actions/download-action';
@@ -12,7 +13,10 @@ import { SetRatingAction } from '/@/renderer/features/context-menu/actions/set-r
 import { ShareAction } from '/@/renderer/features/context-menu/actions/share-action';
 import { ShowInFileExplorerAction } from '/@/renderer/features/context-menu/actions/show-in-file-explorer-action';
 import { ContextMenuPreview } from '/@/renderer/features/context-menu/components/context-menu-preview';
+import { downloadOffline } from '/@/renderer/features/site/offline';
+import { roomCommand } from '/@/renderer/features/site/room';
 import { ContextMenu } from '/@/shared/components/context-menu/context-menu';
+import { toast } from '/@/shared/components/toast/toast';
 import { LibraryItem, Song } from '/@/shared/types/domain-types';
 
 interface SongContextMenuProps {
@@ -21,6 +25,7 @@ interface SongContextMenuProps {
 }
 
 export const SongContextMenu = ({ items, type }: SongContextMenuProps) => {
+    const { t } = useTranslation();
     const { ids } = useMemo(() => {
         const ids = items.map((item) => item.id);
         return { ids };
@@ -39,6 +44,38 @@ export const SongContextMenu = ({ items, type }: SongContextMenuProps) => {
             <SetRatingAction ids={ids} itemType={LibraryItem.SONG} />
             <ContextMenu.Divider />
             <DownloadAction ids={ids} />
+            {window.SERVER_NAME === 'ndFork' && (
+                <>
+                    <ContextMenu.Item
+                        leftIcon="download"
+                        onSelect={() => {
+                            void (async () => {
+                                for (const song of items) await downloadOffline(song);
+                            })().catch((e) => toast.error({ message: e.message }));
+                        }}
+                    >
+                        {t('site.download')}
+                    </ContextMenu.Item>
+                    <ContextMenu.Item
+                        leftIcon="queue"
+                        onSelect={() => {
+                            void roomCommand('add', { songIds: ids }).catch((e) =>
+                                toast.error({ message: e.message }),
+                            );
+                        }}
+                    >
+                        {t('site.addToRoom')}
+                    </ContextMenu.Item>
+                    <ContextMenu.Item
+                        leftIcon="info"
+                        onSelect={() => {
+                            location.hash = `/track/${ids[0]}`;
+                        }}
+                    >
+                        {t('site.trackDetails')}
+                    </ContextMenu.Item>
+                </>
+            )}
             <ShareAction ids={ids} itemType={LibraryItem.SONG} />
             <ContextMenu.Divider />
             <GoToAction items={items} />

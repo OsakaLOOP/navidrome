@@ -12,6 +12,7 @@ import {
     SidebarSharedPlaylistList,
     useSidebarPlaylistAddDragMonitor,
 } from '/@/renderer/features/sidebar/components/sidebar-playlist-list';
+import { SiteNavigation } from '/@/renderer/features/site/site-navigation';
 import {
     SidebarItemType,
     useSidebarItems,
@@ -77,6 +78,7 @@ export const MobileSidebar = () => {
                 <ActionBar />
             </Group>
             <ScrollArea allowDragScroll className={styles.scrollArea}>
+                <SiteNavigation />
                 <Accordion
                     classNames={{
                         content: styles.accordionContent,

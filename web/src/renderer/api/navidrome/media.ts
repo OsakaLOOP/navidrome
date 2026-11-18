@@ -1,3 +1,5 @@
+import { offlineCoverUrl } from '/@/renderer/features/site/offline';
+
 import {
     ImageArgs,
     ImageRequest,
@@ -13,6 +15,10 @@ export const getMediaImageRequest = ({
     if (!server?.credential || !query.id) return null;
 
     let id = query.id.split('&')[0];
+    if (!navigator.onLine && window.SERVER_NAME === 'ndFork') {
+        const cover = offlineCoverUrl(id, server.url, server.userId);
+        if (cover) return { cacheKey: cover, url: cover };
+    }
     if (!/^(al|ar|mf|pl|ra|dc)-/.test(id)) {
         const prefixes: Partial<Record<LibraryItem, string>> = {
             [LibraryItem.ALBUM]: 'al',
@@ -26,6 +32,9 @@ export const getMediaImageRequest = ({
 
     return {
         cacheKey: [server.id, baseUrl || '', path].join(':'),
-        url: `${baseUrl || server.url}${path}?${server.credential}&v=1.16.1&c=ndFork`,
+        url:
+            window.SERVER_NAME === 'ndFork' && server.ndCredential
+                ? `${baseUrl || server.url}/site${path}?jwt=${encodeURIComponent(server.ndCredential)}`
+                : `${baseUrl || server.url}${path}?${server.credential}&v=1.16.1&c=ndFork`,
     };
 };

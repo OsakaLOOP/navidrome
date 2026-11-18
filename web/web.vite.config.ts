@@ -114,7 +114,7 @@ export default defineConfig({
                         type: 'image/png',
                     },
                 ],
-                name: 'Feishin',
+                name: 'ndFork',
                 orientation: 'portrait',
                 screenshots: [
                     {
@@ -125,7 +125,7 @@ export default defineConfig({
                         type: 'image/webp',
                     },
                 ],
-                short_name: 'Feishin',
+                short_name: 'ndFork',
                 start_url: './',
                 theme_color: '#1E003D',
             },
@@ -139,6 +139,22 @@ export default defineConfig({
                 globIgnores: ['**/kuromoji/**'],
                 maximumFileSizeToCacheInBytes: 1000000 * 10, // 10 MB
                 navigateFallbackDenylist: [/\/settings\.js$/],
+                runtimeCaching: [
+                    {
+                        handler: 'NetworkFirst',
+                        options: {
+                            cacheableResponse: { statuses: [200] },
+                            cacheName: 'ndfork-settings',
+                            networkTimeoutSeconds: 3,
+                        },
+                        urlPattern: /\/music\/settings\.js$/,
+                    },
+                    {
+                        handler: 'CacheOnly',
+                        options: { cacheName: 'ndfork-offline-covers' },
+                        urlPattern: /\/offline-cover\//,
+                    },
+                ],
                 skipWaiting: true,
             },
         }),
