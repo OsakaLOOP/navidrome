@@ -78,6 +78,10 @@ class SiteRoomConflict extends Error {
     }
 }
 
+export function isRoomActive() {
+    return Boolean(useRoom.getState().member);
+}
+
 export function RoomBridge() {
     const member = useRoom((state) => state.member);
     const serverId = useAuthStore((state) => state.currentServer?.id);

@@ -24,6 +24,27 @@
         "searching": "Searching…",
         "sharedMode": "Shared playback"
     },
+    "discussion": {
+        "back": "Back to player",
+        "deleteHint": "Replies will remain visible.",
+        "deleteTitle": "Delete this comment?",
+        "empty": "No comments yet",
+        "emptyHint": "Share what you hear.",
+        "formerUser": "Former listener",
+        "latest": "Latest comments",
+        "loadFailed": "Could not load comments.",
+        "loading": "Loading comments",
+        "options": "Comment options",
+        "original": "Original comment",
+        "posted": "Comment posted",
+        "quoteUnavailable": "The original comment is no longer available.",
+        "retry": "Try again",
+        "retryMore": "Retry loading older comments",
+        "seek": "Play from {{time}}",
+        "sharedSeek": "Return to personal playback to play this song.",
+        "tooLong": "Comments can contain up to 4,000 characters.",
+        "unlike": "Remove like"
+    },
     "action": {
         "addToFavorites": "Add to $t(entity.favorite, {\"count\": 2})",
         "addToPlaylist": "Add to $t(entity.playlist, {\"count\": 1})",

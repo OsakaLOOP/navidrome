@@ -30,6 +30,8 @@ import {
 } from '/@/renderer/features/radio/hooks/use-radio-player';
 import { useSetFavorite } from '/@/renderer/features/shared/hooks/use-set-favorite';
 import { useSetRating } from '/@/renderer/features/shared/hooks/use-set-rating';
+import { DiscussionPanel } from '/@/renderer/features/site/discussion-panel';
+import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
 import { useFastAverageColor } from '/@/renderer/hooks';
 import {
     useCurrentServer,
@@ -490,7 +492,9 @@ export const MobileFullscreenPlayer = () => {
         [currentSong, setRating],
     );
 
-    const isPlayerState = activeTab !== 'queue' && activeTab !== 'lyrics';
+    const shared = useRoomActive();
+    const isDiscussionState = activeTab === 'discussion' && Boolean(currentSong?.id);
+    const isPlayerState = activeTab !== 'queue' && activeTab !== 'lyrics' && !isDiscussionState;
     const isQueueState = activeTab === 'queue';
     const isLyricsState = activeTab === 'lyrics';
     const isSongDefined = Boolean(currentSong?.id);
@@ -533,6 +537,11 @@ export const MobileFullscreenPlayer = () => {
                     isLyricsActive={isLyricsState}
                     isQueueActive={isQueueState}
                     onToggleContextMenu={handleToggleContextMenu}
+                    onToggleDiscussion={
+                        window.SERVER_NAME === 'ndFork' && currentSong?.id
+                            ? () => setStore({ activeTab: 'discussion' })
+                            : undefined
+                    }
                     onToggleLyrics={handleToggleLyrics}
                     onToggleQueue={handleToggleQueue}
                 />
@@ -564,7 +573,16 @@ export const MobileFullscreenPlayer = () => {
                             />
                         </div>
                         <Stack gap={0} h="100%" w="100%">
-                            <PlayQueue listKey={ItemListKey.FULL_SCREEN} searchTerm={undefined} />
+                            {shared ? (
+                                <div className={styles.lyricsContent}>
+                                    <RoomQueue />
+                                </div>
+                            ) : (
+                                <PlayQueue
+                                    listKey={ItemListKey.FULL_SCREEN}
+                                    searchTerm={undefined}
+                                />
+                            )}
                         </Stack>
                     </motion.div>
                 )}
@@ -600,6 +618,38 @@ export const MobileFullscreenPlayer = () => {
                         </div>
                         <div className={styles.lyricsContent}>
                             <Lyrics fadeOutNoLyricsMessage={false} />
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+            <AnimatePresence>
+                {isDiscussionState && currentSong && (
+                    <motion.div
+                        animate={{ opacity: 1 }}
+                        className={styles.lyricsState}
+                        exit={{ opacity: 0 }}
+                        initial={{ opacity: 0 }}
+                        style={{ zIndex: 2 }}
+                    >
+                        <div className={styles.lyricsHeader}>
+                            <ActionIcon
+                                aria-label={t('discussion.back')}
+                                icon="arrowLeft"
+                                onClick={() => setStore({ activeTab: 'player' })}
+                                variant="subtle"
+                            />
+                            <Text fw={600} size="sm" truncate>
+                                {currentSong.name}
+                            </Text>
+                            <ActionIcon
+                                aria-label={t('site.cancel')}
+                                icon="arrowDownS"
+                                onClick={handleToggleFullScreenPlayer}
+                                variant="subtle"
+                            />
+                        </div>
+                        <div className={styles.lyricsContent}>
+                            <DiscussionPanel id={currentSong.id} kind="song" player />
                         </div>
                     </motion.div>
                 )}

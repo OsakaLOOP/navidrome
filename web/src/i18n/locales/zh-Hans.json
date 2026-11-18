@@ -23,6 +23,27 @@
         "searching": "正在搜索…",
         "sharedMode": "共享播放"
     },
+    "discussion": {
+        "back": "返回播放页",
+        "deleteHint": "删除后，已有回复仍可查看。",
+        "deleteTitle": "删除这条评论？",
+        "empty": "暂无评论",
+        "emptyHint": "来分享你的听歌感受。",
+        "formerUser": "已注销听友",
+        "latest": "最新评论",
+        "loadFailed": "评论加载失败。",
+        "loading": "正在加载评论",
+        "options": "评论选项",
+        "original": "原评论",
+        "posted": "评论已发表",
+        "quoteUnavailable": "原评论已无法查看。",
+        "retry": "重试",
+        "retryMore": "重新加载较早的评论",
+        "seek": "从 {{time}} 开始播放",
+        "sharedSeek": "返回个人播放后可试听这首歌。",
+        "tooLong": "评论最多 4000 字。",
+        "unlike": "取消点赞"
+    },
     "action": {
         "editPlaylist": "编辑 $t(entity.playlist, {\"count\": 1})",
         "moveToTop": "移至顶部",
