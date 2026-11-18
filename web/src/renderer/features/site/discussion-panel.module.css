@@ -17,7 +17,7 @@
     border: 0;
 }
 
-.header, .list-header, .compose-actions, .byline {
+.header, .list-header, .compose-actions, .byline, .editor-header {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
@@ -46,6 +46,32 @@
     padding: 0.75rem;
     background: alpha(var(--theme-colors-foreground), 0.045);
     border-radius: 0.75rem;
+}
+
+.editor-mode {
+    padding: 0;
+    font: inherit;
+    font-size: 0.75rem;
+    color: var(--theme-colors-foreground-muted);
+    cursor: pointer;
+    background: none;
+    border: 0;
+}
+
+.editor-mode[aria-pressed='true'] {
+    color: var(--theme-colors-primary);
+}
+
+.preview {
+    min-height: 5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    background: var(--theme-colors-background);
+    border: 1px solid var(--theme-colors-border);
+    border-radius: var(--theme-radius-md);
 }
 
 .comment {
@@ -141,6 +167,12 @@ a.author:hover {
 
 .quote-name {
     font-weight: 650;
+}
+
+.quote-body img {
+    max-width: 1.5rem;
+    max-height: 1.5rem;
+    vertical-align: middle;
 }
 
 .empty {

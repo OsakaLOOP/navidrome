@@ -5,6 +5,7 @@ import { Link } from 'react-router';
 
 import type { EntityKind } from './entity-panel';
 
+import { EmojiPicker, EmojiText, useDiscussionEmoji } from './discussion-emoji';
 import styles from './discussion-panel.module.css';
 import { isRoomActive, useRoomActive } from './room';
 import { siteApi } from './site-api';
@@ -69,6 +70,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
     const input = useRef<HTMLTextAreaElement>(null);
     const items = useRef(new Map<number, HTMLElement>());
     const [body, setBody] = useState('');
+    const [preview, setPreview] = useState(false);
     const [reply, setReply] = useState<Comment | null>(null);
     const [deleting, setDeleting] = useState<Comment | null>(null);
     const [anchor, setAnchor] = useState<Comment | null>(null);
@@ -79,6 +81,8 @@ function Discussion({ actions, children, id, kind, player }: Props) {
     const [position, setPosition] = useState<number>();
     const [menu, setMenu] = useState<number>();
     const [showPeople, setShowPeople] = useState(false);
+    const emoji = useDiscussionEmoji();
+    const emojiIndex = emoji.data?.index;
     const path = `/site/discussion/${kind}/${encodeURIComponent(id)}`;
     const key = ['site', 'discussion', server?.id, server?.userId, kind, id];
     const query = useInfiniteQuery({
@@ -120,12 +124,23 @@ function Discussion({ actions, children, id, kind, player }: Props) {
             () => siteApi.request(path, { body, parentId: reply?.id, position }),
             () => {
                 setBody('');
+                setPreview(false);
                 setReply(null);
                 setPosition(undefined);
                 setNotice({ error: false, text: t('discussion.posted') });
                 void refresh();
             },
         );
+    };
+    const insertEmoji = (token: string) => {
+        const start = input.current?.selectionStart ?? body.length;
+        const end = input.current?.selectionEnd ?? start;
+        setBody(body.slice(0, start) + token + body.slice(end));
+        setPreview(false);
+        requestAnimationFrame(() => {
+            input.current?.focus();
+            input.current?.setSelectionRange(start + token.length, start + token.length);
+        });
     };
     const locate = (quote: Quote) => {
         const element = items.current.get(quote.id);
@@ -166,7 +181,11 @@ function Discussion({ actions, children, id, kind, player }: Props) {
             <span className={styles.quoteName}>
                 {quote.deleted ? t('site.deleted') : quote.name || t('discussion.formerUser')}
             </span>
-            {!quote.deleted && <span className={styles.quoteBody}>{quote.body}</span>}
+            {!quote.deleted && (
+                <span className={styles.quoteBody}>
+                    <EmojiText index={emojiIndex} text={quote.body} />
+                </span>
+            )}
         </button>
     );
     const renderCard = (comment: Comment, inDialog = false) => {
@@ -215,7 +234,11 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     </div>
                     {comment.parent && renderQuote(comment.parent)}
                     <p className={comment.deleted ? styles.deleted : styles.body}>
-                        {comment.deleted ? t('site.deleted') : comment.body}
+                        {comment.deleted ? (
+                            t('site.deleted')
+                        ) : (
+                            <EmojiText index={emojiIndex} text={comment.body} />
+                        )}
                     </p>
                     {!comment.deleted && (
                         <Group gap="xs" wrap="wrap">
@@ -268,6 +291,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                             <Button
                                 onClick={() => {
                                     setAnchor(null);
+                                    setPreview(false);
                                     setReply(comment);
                                     requestAnimationFrame(() => input.current?.focus());
                                 }}
@@ -356,17 +380,59 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                             />
                         </Group>
                     )}
-                    <Textarea
-                        aria-label={t('site.writeComment')}
-                        autosize
-                        error={composerError || (length > limit ? t('discussion.tooLong') : false)}
-                        maxRows={7}
-                        minRows={2}
-                        onChange={(event) => setBody(event.currentTarget.value)}
-                        placeholder={t('site.writeComment')}
-                        ref={input}
-                        value={body}
-                    />
+                    <div className={styles.editorHeader}>
+                        <Group gap="md">
+                            <button
+                                aria-pressed={!preview}
+                                className={styles.editorMode}
+                                onClick={() => setPreview(false)}
+                                type="button"
+                            >
+                                {t('discussion.write')}
+                            </button>
+                            <button
+                                aria-pressed={preview}
+                                className={styles.editorMode}
+                                onClick={() => setPreview(true)}
+                                type="button"
+                            >
+                                {t('common.preview')}
+                            </button>
+                        </Group>
+                        <EmojiPicker
+                            disabled={busy === 'post'}
+                            emoji={emoji}
+                            onSelect={insertEmoji}
+                        />
+                    </div>
+                    <div hidden={preview}>
+                        <Textarea
+                            aria-label={t('site.writeComment')}
+                            autosize
+                            maxRows={7}
+                            minRows={2}
+                            onChange={(event) => setBody(event.currentTarget.value)}
+                            placeholder={t('site.writeComment')}
+                            ref={input}
+                            value={body}
+                        />
+                    </div>
+                    {preview && (
+                        <div className={styles.preview}>
+                            {body.trim() ? (
+                                <EmojiText index={emojiIndex} text={body} />
+                            ) : (
+                                <Text c="dimmed" size="sm">
+                                    {t('discussion.emptyPreview')}
+                                </Text>
+                            )}
+                        </div>
+                    )}
+                    {(composerError || length > limit) && (
+                        <Text c="red" role="alert" size="xs">
+                            {composerError || t('discussion.tooLong')}
+                        </Text>
+                    )}
                     <div className={styles.composeActions}>
                         <Group gap="xs">
                             {(canAttach || position != null) && (

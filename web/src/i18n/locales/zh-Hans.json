@@ -27,8 +27,13 @@
         "back": "返回播放页",
         "deleteHint": "删除后，已有回复仍可查看。",
         "deleteTitle": "删除这条评论？",
+        "emoji": "表情",
+        "emojiGroups": "表情分组",
+        "emojiLoading": "正在加载表情…",
+        "emojiUnavailable": "表情加载失败。",
         "empty": "暂无评论",
         "emptyHint": "来分享你的听歌感受。",
+        "emptyPreview": "评论预览将在这里显示。",
         "formerUser": "已注销听友",
         "latest": "最新评论",
         "loadFailed": "评论加载失败。",
@@ -42,7 +47,8 @@
         "seek": "从 {{time}} 开始播放",
         "sharedSeek": "返回个人播放后可试听这首歌。",
         "tooLong": "评论最多 4000 字。",
-        "unlike": "取消点赞"
+        "unlike": "取消点赞",
+        "write": "撰写"
     },
     "metadataEditor": {
         "confirmFiles_other": "将以下标签写入 {{count}} 个文件？",

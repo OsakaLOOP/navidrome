@@ -28,8 +28,13 @@
         "back": "Back to player",
         "deleteHint": "Replies will remain visible.",
         "deleteTitle": "Delete this comment?",
+        "emoji": "Emoji",
+        "emojiGroups": "Emoji groups",
+        "emojiLoading": "Loading emoji…",
+        "emojiUnavailable": "Could not load emoji.",
         "empty": "No comments yet",
         "emptyHint": "Share what you hear.",
+        "emptyPreview": "Your comment will appear here.",
         "formerUser": "Former listener",
         "latest": "Latest comments",
         "loadFailed": "Could not load comments.",
@@ -43,7 +48,8 @@
         "seek": "Play from {{time}}",
         "sharedSeek": "Return to personal playback to play this song.",
         "tooLong": "Comments can contain up to 4,000 characters.",
-        "unlike": "Remove like"
+        "unlike": "Remove like",
+        "write": "Write"
     },
     "metadataEditor": {
         "confirmFiles_one": "Write these tags to {{count}} file?",

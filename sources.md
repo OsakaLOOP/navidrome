@@ -2,6 +2,17 @@
 
 本项目的设计与开发入口见根目录 README。以下记录用于追溯选型与接口事实。
 
+## 博客评论表情
+
+- 来源：https://github.com/OsakaLOOP/astro-paper ，本机仓库提交 `7f57d27`。
+- 交互入口为 `src/components/EmojiPicker.astro` 与文章页的 `Comments.astro`，样式在 `src/styles/global.css`。
+- 复用 `public/emoji/` 的 8 套资源及清单；评论沿用 `src/utils/emoji.ts` 的短码语法。
+
+## SoundCloud 评论交互
+
+- 评论：时间点、回复及删除。https://help.soundcloud.com/hc/en-us/articles/115003566008-Comments
+- 移动端评论：全屏播放入口、回复与管理。https://help.soundcloud.com/hc/en-us/articles/360007834253-Comments-on-Mobile-iOS-Android
+
 ## Navidrome
 
 - 仓库：https://github.com/navidrome/navidrome
