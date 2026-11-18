@@ -15,6 +15,7 @@ import {
     useIsRadioActive,
     useRadioPlayer,
 } from '/@/renderer/features/radio/hooks/use-radio-player';
+import { RoomPlayerButton } from '/@/renderer/features/site/room';
 import { AppRoute } from '/@/renderer/router/routes';
 import {
     useFullScreenPlayerStore,
@@ -226,6 +227,7 @@ export const MobilePlayerbar = () => {
                 </LayoutGroup>
             </div>
             <div className={styles.controlsWrapper}>
+                <RoomPlayerButton />
                 <PlayerButton
                     icon={<Icon fill="default" icon="mediaPrevious" size="md" />}
                     onClick={(e) => {

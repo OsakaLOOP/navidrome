@@ -11,6 +11,7 @@ import { useRadioStore as useRadioPlayerStore } from '/@/renderer/features/radio
 import { createSelectors } from '/@/renderer/lib/zustand';
 import { useSettingsStore } from '/@/renderer/store/settings.store';
 import {
+    setTimestampPersistence,
     setTimestamp as setTimestampStore,
     useTimestampStoreBase,
 } from '/@/renderer/store/timestamp.store';
@@ -28,6 +29,15 @@ import {
 
 export interface PlayerState extends Actions, State {}
 
+export type SharedPlaybackCommand = {
+    action: 'add' | 'next' | 'pause' | 'play' | 'previous' | 'seek' | 'select';
+    index?: number;
+    playType?: Play;
+    position?: number;
+    songs?: Song[];
+};
+let sharedPlayback: ((command: SharedPlaybackCommand) => boolean) | undefined;
+let personalPlayback: (Pick<State, 'player' | 'queue'> & { position: number }) | undefined;
 export type QueueGroupingProperty = keyof QueueSong;
 
 interface Actions {
@@ -108,6 +118,15 @@ interface State {
     queue: QueueData;
 }
 
+export function beginSharedPlayback(handler: NonNullable<typeof sharedPlayback>) {
+    const { player, queue } = usePlayerStoreBase.getState();
+    personalPlayback = { player, position: useTimestampStoreBase.getState().timestamp, queue };
+    setSharedPlayback(handler);
+    setTimestampPersistence(false);
+    clearActiveRadio();
+    syncSharedSong(undefined, 0, false);
+}
+
 // Calculates the next song based on repeat mode and current position
 export function calculateNextSong(
     currentIndex: number,
@@ -133,6 +152,28 @@ export function calculateNextSong(
         // When repeat is none, next song is undefined if at the end
         return queueItems[currentIndex + 1];
     }
+}
+
+export function endSharedPlayback(restore: boolean) {
+    const saved = personalPlayback;
+    personalPlayback = undefined;
+    setSharedPlayback();
+    if (!saved) return;
+    setTimestampPersistence(true);
+    const { player } = usePlayerStoreBase.getState();
+    const position = restore ? saved.position : 0;
+    setTimestampStore(position);
+    usePlayerStoreBase.setState({
+        player: {
+            ...saved.player,
+            index: restore ? saved.player.index : -1,
+            muted: player.muted,
+            seekToTimestamp: uniqueSeekToTimestamp(position),
+            status: restore ? saved.player.status : PlayerStatus.PAUSED,
+            volume: player.volume,
+        },
+        queue: restore ? saved.queue : initialState.queue,
+    });
 }
 
 export function getDualPlayerSongs(
@@ -168,6 +209,40 @@ export function mapShuffledToQueueIndex(shuffledIndex: number, shuffled: number[
         return shuffled[shuffledIndex];
     }
     return shuffledIndex;
+}
+
+export function setSharedPlayback(handler?: (command: SharedPlaybackCommand) => boolean) {
+    sharedPlayback = handler;
+}
+
+export function syncSharedSong(song: QueueSong | undefined, position: number, playing: boolean) {
+    const { player, queue } = usePlayerStoreBase.getState();
+    const sameSong = queue.default[0] === song?._uniqueId;
+    const seek =
+        !sameSong || Math.abs(useTimestampStoreBase.getState().timestamp - position) > 0.45;
+    if (seek) setTimestampStore(position);
+    const status = playing && song ? PlayerStatus.PLAYING : PlayerStatus.PAUSED;
+    if (sameSong && !seek && player.status === status) return;
+    usePlayerStoreBase.setState({
+        player: {
+            ...player,
+            index: song ? 0 : -1,
+            pauseOnNextSongEnd: true,
+            repeat: PlayerRepeat.NONE,
+            seekToTimestamp: seek ? uniqueSeekToTimestamp(position) : player.seekToTimestamp,
+            shuffle: PlayerShuffle.NONE,
+            speed: 1,
+            status,
+            transitionType: PlayerStyle.GAPLESS,
+        },
+        queue: sameSong
+            ? queue
+            : {
+                  default: song ? [song._uniqueId] : [],
+                  shuffled: [],
+                  songs: song ? { [song._uniqueId]: song } : {},
+              },
+    });
 }
 
 // We need to use a unique id so that the equalityFn can work if attempting to set the same timestamp
@@ -371,6 +446,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
         subscribeWithSelector(
             immer((set, get) => ({
                 addToQueueByType: (items, playType, playSongId) => {
+                    if (sharedPlayback?.({ action: 'add', playType, songs: items })) return;
                     const newItems = items.map(toQueueSong);
                     const newUniqueIds = newItems.map((item) => item._uniqueId);
 
@@ -605,6 +681,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     }
                 },
                 addToQueueByUniqueId: (items, uniqueId, edge, playSongId) => {
+                    if (sharedPlayback?.({ action: 'add', songs: items })) return;
                     const newItems = items.map(toQueueSong);
                     const newUniqueIds = newItems.map((item) => item._uniqueId);
 
@@ -737,6 +814,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 clearSelected: (items: QueueSong[]) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const uniqueIds = new Set(items.map((item) => item._uniqueId));
 
@@ -933,6 +1011,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     return currentIndex === queue.items.length - 1;
                 },
                 mediaAutoNext: () => {
+                    if (sharedPlayback) return get().getPlayerData();
                     const stateSnapshot = get();
                     const currentIndex = stateSnapshot.player.index;
                     const player = stateSnapshot.player;
@@ -1055,6 +1134,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     };
                 },
                 mediaNext: (toNextAlbum) => {
+                    if (sharedPlayback?.({ action: 'next' })) return;
                     const state = get();
                     const currentIndex = state.player.index;
                     const player = state.player;
@@ -1141,11 +1221,23 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 mediaPause: () => {
+                    if (sharedPlayback?.({ action: 'pause' })) return;
                     set((state) => {
                         state.player.status = PlayerStatus.PAUSED;
                     });
                 },
                 mediaPlay: (id?: string) => {
+                    if (
+                        sharedPlayback?.({
+                            action: id ? 'select' : 'play',
+                            index: id
+                                ? get()
+                                      .getQueue()
+                                      .items.findIndex((song) => song._uniqueId === id)
+                                : undefined,
+                        })
+                    )
+                        return;
                     let playIndex: number | undefined;
 
                     // Playing a specific queue song should dismiss radio first.
@@ -1197,6 +1289,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     }
                 },
                 mediaPlayByIndex: (index: number) => {
+                    if (sharedPlayback?.({ action: 'select', index })) return;
                     let playIndex: number | undefined;
                     let songId: string | undefined;
 
@@ -1242,6 +1335,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     }
                 },
                 mediaPrevious: (toPreviousAlbum) => {
+                    if (sharedPlayback?.({ action: 'previous' })) return;
                     const currentIndex = get().player.index;
                     const player = get().player;
                     const queue = get().getQueueOrder();
@@ -1293,6 +1387,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 mediaSeekToTimestamp: (timestamp: number) => {
+                    if (sharedPlayback?.({ action: 'seek', position: timestamp })) return;
                     // See mediaSkipBackward: update the timestamp store right away to
                     // avoid the stale-read left by the ~500ms engine poll.
                     setTimestampStore(timestamp);
@@ -1301,6 +1396,16 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 mediaSkipBackward: (offset?: number) => {
+                    if (
+                        sharedPlayback?.({
+                            action: 'seek',
+                            position: Math.max(
+                                0,
+                                useTimestampStoreBase.getState().timestamp - (offset ?? 10),
+                            ),
+                        })
+                    )
+                        return;
                     const offsetFromSettings =
                         useSettingsStore.getState().general.skipButtons.skipBackwardSeconds;
                     const timeToSkip = offset ?? offsetFromSettings ?? 5;
@@ -1317,6 +1422,13 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 mediaSkipForward: (offset?: number) => {
+                    if (
+                        sharedPlayback?.({
+                            action: 'seek',
+                            position: useTimestampStoreBase.getState().timestamp + (offset ?? 10),
+                        })
+                    )
+                        return;
                     const state = get();
                     const queue = state.getQueue();
                     const index = state.player.index;
@@ -1341,6 +1453,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 mediaStop: (options?: { reset?: boolean }) => {
+                    if (sharedPlayback?.({ action: 'pause' })) return;
                     const reset = options?.reset !== false;
                     set((state) => {
                         state.player.status = PlayerStatus.STOPPED;
@@ -1358,6 +1471,12 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 mediaTogglePlayPause: () => {
+                    if (
+                        sharedPlayback?.({
+                            action: get().player.status === PlayerStatus.PLAYING ? 'pause' : 'play',
+                        })
+                    )
+                        return;
                     // Restarting from STOPPED (e.g. end of queue) needs a full play
                     // event so engines like mpv can reload the current track — play()
                     // alone is a no-op when mpv's playlist-pos is -1.
@@ -1376,6 +1495,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     }
                 },
                 moveSelectedTo: (items: QueueSong[], uniqueId: string, edge: 'bottom' | 'top') => {
+                    if (sharedPlayback) return;
                     const itemUniqueIds = items.map((item) => item._uniqueId);
 
                     set((state) => {
@@ -1409,6 +1529,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 moveSelectedToBottom: (items: QueueSong[]) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const uniqueIds = items.map((item) => item._uniqueId);
 
@@ -1429,6 +1550,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 moveSelectedToNext: (items: QueueSong[]) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const uniqueIds = items.map((item) => item._uniqueId);
 
@@ -1463,6 +1585,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 moveSelectedToTop: (items: QueueSong[]) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const uniqueIds = items.map((item) => item._uniqueId);
 
@@ -1483,6 +1606,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 setQueue: (items, index, position) => {
+                    if (sharedPlayback?.({ action: 'add', songs: items })) return;
                     const newItems = items.map(toQueueSong);
                     const newUniqueIds = newItems.map((item) => item._uniqueId);
 
@@ -1516,16 +1640,19 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 setPauseOnNextSongEnd: (value: boolean) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         state.player.pauseOnNextSongEnd = value;
                     });
                 },
                 setRepeat: (repeat: PlayerRepeat) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         state.player.repeat = repeat;
                     });
                 },
                 setShuffle: (shuffle: PlayerShuffle) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const wasShuffled = state.player.shuffle === PlayerShuffle.TRACK;
                         const willBeShuffled = shuffle === PlayerShuffle.TRACK;
@@ -1567,12 +1694,14 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 setSpeed: (speed: number) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const normalizedSpeed = Math.max(0.5, Math.min(2, speed));
                         state.player.speed = normalizedSpeed;
                     });
                 },
                 setTransitionType: (transitionType: PlayerStyle) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         state.player.transitionType = transitionType;
                     });
@@ -1583,6 +1712,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 shuffle: () => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         if (state.player.shuffle === PlayerShuffle.TRACK) {
                             state.queue.shuffled = generateShuffledIndexes(
@@ -1592,6 +1722,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 shuffleAll: () => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const queue = state.getQueue();
                         const currentIndex = state.player.index;
@@ -1630,6 +1761,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 shuffleSelected: (items: QueueSong[]) => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const itemUniqueIds = items.map((item) => item._uniqueId);
 
@@ -1664,6 +1796,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 toggleRepeat: () => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         if (state.player.repeat === PlayerRepeat.NONE) {
                             state.player.repeat = PlayerRepeat.ONE;
@@ -1675,6 +1808,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 toggleShuffle: () => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         const wasShuffled = state.player.shuffle === PlayerShuffle.TRACK;
                         const willBeShuffled = state.player.shuffle !== PlayerShuffle.TRACK;
@@ -1762,6 +1896,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                 usePlayerStoreBase.setState({ hydrated: true });
             },
             partialize: (state) => {
+                const stored = personalPlayback ?? state;
                 const shouldRestorePlayQueue = useSettingsStore.getState().general.resume;
 
                 // Exclude playerNum, seekToTimestamp, and status from stored player object
@@ -1776,9 +1911,11 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                 }
 
                 const player = Object.fromEntries(
-                    Object.entries(state.player).filter(
-                        ([key]) => !excludedPlayerKeys.includes(key),
-                    ),
+                    Object.entries({
+                        ...stored.player,
+                        muted: state.player.muted,
+                        volume: state.player.volume,
+                    }).filter(([key]) => !excludedPlayerKeys.includes(key)),
                 ) as typeof state.player;
 
                 if (!shouldRestorePlayQueue) {
@@ -1787,7 +1924,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
 
                 // Queue pruning and IDB writes are handled in `playerStoreStorage` so we only
                 // serialize the large queue when the queue slice reference actually changes.
-                return { player, queue: state.queue };
+                return { player, queue: stored.queue };
             },
             storage: playerStoreStorage,
             version: 4,

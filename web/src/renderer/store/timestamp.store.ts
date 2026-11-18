@@ -4,10 +4,15 @@ import { persist, subscribeWithSelector } from 'zustand/middleware';
 import { createWithEqualityFn } from 'zustand/traditional';
 
 const PLAYER_TIMESTAMP_POLL_INTERVAL_MS = 500;
+let persistTimestamp = true;
 
 interface TimestampState {
     setTimestamp: (timestamp: number) => void;
     timestamp: number;
+}
+
+export function setTimestampPersistence(enabled: boolean) {
+    persistTimestamp = enabled;
 }
 
 const timestampStorage = {
@@ -22,7 +27,7 @@ const timestampStorage = {
         await del(name);
     },
     setItem: async (name: string, value: { state: { timestamp: number }; version?: number }) => {
-        await set(name, value.state.timestamp);
+        if (persistTimestamp) await set(name, value.state.timestamp);
     },
 };
 

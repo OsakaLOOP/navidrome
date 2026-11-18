@@ -1,4 +1,28 @@
 {
+    "together": {
+        "add": "添加",
+        "addNext": "下一首播放",
+        "addedBy": "{{name}} 点歌",
+        "changed": "共享队列已更新，请确认新顺序后重试。",
+        "details": "房间详情",
+        "devices_other": "{{count}} 台设备",
+        "help": "所有成员都能控制播放和编辑共享队列。离开后将恢复个人队列和进度。",
+        "joinFirst": "加入一起听后即可点歌和控制播放。",
+        "leave": "返回个人播放",
+        "members": "成员",
+        "moveDown": "下移",
+        "moveUp": "上移",
+        "noResults": "没有找到曲目",
+        "paused": "已暂停",
+        "personalMode": "个人播放",
+        "playing": "播放中",
+        "progress": "共享播放进度",
+        "queue": "共享队列",
+        "reconnecting": "正在重新连接",
+        "search": "搜索曲目",
+        "searching": "正在搜索…",
+        "sharedMode": "共享播放"
+    },
     "action": {
         "editPlaylist": "编辑 $t(entity.playlist, {\"count\": 1})",
         "moveToTop": "移至顶部",

@@ -12,6 +12,7 @@ import {
     useRadioControls,
     useRadioPlayer,
 } from '/@/renderer/features/radio/hooks/use-radio-player';
+import { useRoomActive } from '/@/renderer/features/site/room';
 import {
     useButtonSize,
     usePlayerRepeat,
@@ -29,6 +30,7 @@ export const CenterControls = () => {
     const skip = useSkipButtons();
 
     const isRadioActive = useIsRadioActive();
+    const shared = useRoomActive();
 
     if (isRadioActive) {
         return (
@@ -55,14 +57,14 @@ export const CenterControls = () => {
             <div className={styles.controlsContainer}>
                 <div className={styles.buttonsContainer}>
                     <StopButton />
-                    <ShuffleButton />
+                    {!shared && <ShuffleButton />}
                     <PreviousButton />
                     {skip?.enabled && <SkipBackwardButton />}
                     <CenterPlayButton />
                     {skip?.enabled && <SkipForwardButton />}
                     <NextButton />
-                    <RepeatButton />
-                    <ShuffleAllButton />
+                    {!shared && <RepeatButton />}
+                    {!shared && <ShuffleAllButton />}
                 </div>
             </div>
             <PlayerbarSlider />

@@ -17,6 +17,7 @@ import {
 import { useSetRating } from '/@/renderer/features/shared/hooks/use-set-rating';
 import { useCreateFavorite } from '/@/renderer/features/shared/mutations/create-favorite-mutation';
 import { useDeleteFavorite } from '/@/renderer/features/shared/mutations/delete-favorite-mutation';
+import { RoomPlayerButton, useRoomActive } from '/@/renderer/features/site/room';
 import { useHotkeys } from '/@/renderer/hooks/use-hotkeys';
 import {
     AUTO_DJ_MODE,
@@ -89,19 +90,21 @@ export const RightControls = () => {
     const showRatings = useShowRatings();
     const showFavorites = useShowFavorites();
     const playbackType = usePlaybackType();
+    const shared = useRoomActive();
     return (
         <Flex align="flex-end" direction="column" h="100%" px="1rem" py="0.5rem">
             <Group h="calc(100% / 3)">
                 {showRatings && <RatingButton />}
-                <AutoDJButton />
+                {!shared && <AutoDJButton />}
             </Group>
             <Group align="center" gap="xs" wrap="nowrap">
-                <DlnaCastButton />
+                {!shared && <DlnaCastButton />}
                 <SleepTimerButton />
                 <PlayerConfig />
                 <LyricsButton />
                 {showFavorites && <FavoriteButton />}
-                <QueueButton />
+                {!shared && <QueueButton />}
+                <RoomPlayerButton />
                 {playbackType === PlayerType.DLNA ? <DlnaVolumeButton /> : <VolumeButton />}
             </Group>
             <Group h="calc(100% / 3)" />
