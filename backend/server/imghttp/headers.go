@@ -45,6 +45,9 @@ func writeImageHeaders(w http.ResponseWriter, r *http.Request, img *artwork.Imag
 	// so art that gets re-resolved is never pinned.
 	if requestedHash != "" && requestedHash == img.Hash {
 		h.Set("Cache-Control", scope+", max-age=31536000, immutable")
+		if r.URL.Query().Get("token") != "" {
+			h.Set("CDN-Cache-Control", "public, max-age=31536000, immutable")
+		}
 	} else {
 		h.Set("Cache-Control", scope+", no-cache")
 	}

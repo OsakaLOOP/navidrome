@@ -2,10 +2,12 @@ package lyrics
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	. "github.com/Masterminds/squirrel"
 	"github.com/navidrome/navidrome/conf"
+	"github.com/navidrome/navidrome/db"
 	"github.com/navidrome/navidrome/log"
 	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/persistence"
@@ -48,6 +50,15 @@ func NewLyrics(ds model.DataStore, pluginLoader PluginLoader) Lyrics {
 // GetLyrics returns lyrics for the given media file, trying sources in the
 // order specified by conf.Server.LyricsPriority.
 func (l *lyricsService) GetLyrics(ctx context.Context, mf *model.MediaFile) (model.LyricList, error) {
+	var overrides string
+	if db.Db().QueryRowContext(ctx, "SELECT overrides FROM site_metadata WHERE kind='song' AND item_id=?", mf.ID).Scan(&overrides) == nil {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal([]byte(overrides), &fields) == nil {
+			if _, ok := fields["lyrics"]; ok {
+				return mf.StructuredLyrics()
+			}
+		}
+	}
 	return l.getLyricsForCandidates(ctx, []*model.MediaFile{mf})
 }
 

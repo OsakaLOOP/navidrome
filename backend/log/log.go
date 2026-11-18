@@ -30,6 +30,7 @@ var redacted = &Hook{
 		"(ApiKey:\")[\\w]*",
 		"(Secret:\")[\\w]*",
 		"(PasswordEncryptionKey:[\\s]*\")[^\"]*",
+		"(MediaSigningKey:[\\s]*\")[^\"]*",
 		"(UserHeader:[\\s]*\")[^\"]*",
 		"(TrustedSources:[\\s]*\")[^\"]*",
 		"(MetricsPath:[\\s]*\")[^\"]*",

@@ -3,5 +3,6 @@
 node_modules/
 web/out/
 backend/navidrome.exe
+*.exe~
 backend/resources/music/*
 

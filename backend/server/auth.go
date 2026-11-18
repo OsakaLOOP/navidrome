@@ -55,8 +55,12 @@ func doLogin(ds model.DataStore, username string, password string, w http.Respon
 		return
 	}
 	if user == nil {
-		log.Warn(r, "Unsuccessful login", "username", username, "request", r.Header)
+		log.Warn(r, "Unsuccessful login", "username", username)
 		_ = rest.RespondWithError(w, http.StatusUnauthorized, "Invalid username or password")
+		return
+	}
+	if !user.IsAdmin && conf.Server.ServerManURL != "" {
+		_ = rest.RespondWithError(w, http.StatusForbidden, "请使用 ServerMan 账号登录")
 		return
 	}
 
@@ -67,6 +71,7 @@ func doLogin(ds model.DataStore, username string, password string, w http.Respon
 	}
 	payload := buildAuthPayload(user)
 	payload["token"] = tokenString
+	setSiteCookie(w, r, "jwt", tokenString, int(conf.Server.SessionTimeout.Seconds()))
 	_ = rest.RespondWithJSON(w, http.StatusOK, payload)
 }
 
@@ -117,6 +122,41 @@ func getCredentialsFromBody(r *http.Request) (username string, password string, 
 	username = data["username"]
 	password = data["password"]
 	return username, password, nil
+}
+
+func (s *Server) registerLocalUser(w http.ResponseWriter, r *http.Request) {
+	if conf.Server.ServerManURL != "" || !conf.Server.EnableRegistration {
+		siteError(w, http.StatusForbidden, "本站未开放注册")
+		return
+	}
+	username, password, err := getCredentialsFromBody(r)
+	username = strings.TrimSpace(username)
+	if err != nil || username == "" || len(username) > 64 || len(password) < 8 || len(password) > 256 {
+		siteError(w, http.StatusBadRequest, "用户名须为 1 至 64 字节，密码须为 8 至 256 字节")
+		return
+	}
+	exists := errors.New("用户名已存在")
+	err = s.ds.WithTx(func(tx model.DataStore) error {
+		_, e := tx.User(r.Context()).FindByUsername(username)
+		if e == nil {
+			return exists
+		}
+		if !errors.Is(e, model.ErrNotFound) {
+			return e
+		}
+		return tx.User(r.Context()).Put(&model.User{
+			ID: id.NewRandom(), UserName: username, Name: username, NewPassword: password,
+		})
+	})
+	if errors.Is(err, exists) {
+		siteError(w, http.StatusConflict, exists.Error())
+		return
+	}
+	if err != nil {
+		siteError(w, http.StatusInternalServerError, "创建账号失败")
+		return
+	}
+	doLogin(s.ds, username, password, w, r)
 }
 
 func createAdmin(ds model.DataStore) func(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +286,9 @@ func UsernameFromConfig(*http.Request) string {
 func contextWithUser(ctx context.Context, ds model.DataStore, username string) (context.Context, error) {
 	user, err := ds.User(ctx).FindByUsername(username)
 	if err == nil {
+		if !SiteUserAllowed(ctx, *user) {
+			return ctx, ErrUnauthenticated
+		}
 		ctx = log.NewContext(ctx, "username", username)
 		ctx = request.WithUsername(ctx, user.UserName)
 		return request.WithUser(ctx, *user), nil

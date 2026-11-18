@@ -109,6 +109,9 @@ func TouchToken(token jwt.Token) (string, error) {
 
 func TouchClaims(c Claims) (string, error) {
 	c = c.WithExpiresAt(time.Now().UTC().Add(conf.Server.SessionTimeout))
+	if !c.CentralExpiresAt.IsZero() && c.CentralExpiresAt.Before(c.ExpiresAt) {
+		c.ExpiresAt = c.CentralExpiresAt
+	}
 	_, newToken, err := TokenAuth.Encode(c.ToMap())
 	return newToken, err
 }

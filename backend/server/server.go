@@ -41,6 +41,7 @@ func New(ds model.DataStore, broker events.Broker, insights metrics.Insights) *S
 	auth.Init(s.ds)
 	s.initRoutes()
 	s.mountAuthenticationRoutes()
+	s.mountSiteRoutes()
 	s.mountRootRedirector()
 	checkFFmpegInstallation()
 	checkExternalCredentials()
@@ -206,7 +207,13 @@ func (s *Server) mountAuthenticationRoutes() chi.Router {
 	r := s.router
 	return r.Route(path.Join(conf.Server.BasePath, "/auth"), func(r chi.Router) {
 		r.Use(NoStore)
+		r.Use(sameSiteWrite)
 		r.Use(LimitLoginBody)
+		r.Get("/session", s.siteSession)
+		r.Post("/logout", s.siteLogout)
+		r.With(ClientIPRateLimiter(20, time.Minute)).Post("/register", s.registerLocalUser)
+		r.With(ClientIPRateLimiter(20, time.Minute)).Post("/serverman", s.servermanLogin)
+		r.With(ClientIPRateLimiter(30, time.Minute)).Post("/exchange", s.exchangeCentralToken)
 		if conf.Server.AuthRequestLimit > 0 {
 			log.Info("Login rate limit set", "requestLimit", conf.Server.AuthRequestLimit,
 				"windowLength", conf.Server.AuthWindowLength)

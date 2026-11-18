@@ -43,6 +43,10 @@ type configOptions struct {
 	LogLevel                        string
 	LogFile                         string
 	SessionTimeout                  time.Duration
+	ServerManURL                    string
+	EnableRegistration              bool
+	MediaSigningKey                 string
+	MediaPublicURL                  string
 	BaseURL                         string
 	BasePath                        string
 	BaseHost                        string
@@ -456,6 +460,8 @@ func Load(noConfigDump bool) {
 		validateByteSize("MaxImageUploadSize", Server.MaxImageUploadSize),
 		validateByteSize("MaxImageSize", Server.MaxImageSize),
 		validateURL("ExtAuth.LogoutURL", Server.ExtAuth.LogoutURL),
+		validateURL("ServerManURL", Server.ServerManURL),
+		validateURL("MediaPublicURL", Server.MediaPublicURL),
 	)
 	if err != nil {
 		logFatal(err)
@@ -976,6 +982,11 @@ func setViperDefaults() {
 	viper.SetDefault("unixsocketperm", "0660")
 	viper.SetDefault("enforcenonrootuser", false)
 	viper.SetDefault("sessiontimeout", consts.DefaultSessionTimeout)
+	viper.SetDefault("servermanurl", "")
+	viper.SetDefault("enableregistration", false)
+	viper.SetDefault("enableregistration", false)
+	viper.SetDefault("mediasigningkey", "")
+	viper.SetDefault("mediapublicurl", "")
 	viper.SetDefault("baseurl", "")
 	viper.SetDefault("tlscert", "")
 	viper.SetDefault("tlskey", "")

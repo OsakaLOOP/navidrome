@@ -10,11 +10,12 @@ import (
 // replacing the untyped map[string]any approach.
 type Claims struct {
 	// Standard JWT claims
-	Issuer    string
-	Subject   string   // username for session tokens
-	Audience  []string // which API may accept this token; empty means any
-	IssuedAt  time.Time
-	ExpiresAt time.Time
+	Issuer           string
+	Subject          string   // username for session tokens
+	Audience         []string // which API may accept this token; empty means any
+	IssuedAt         time.Time
+	ExpiresAt        time.Time
+	CentralExpiresAt time.Time
 
 	// Custom claims
 	UserID  string // "uid"
@@ -44,6 +45,9 @@ func (c Claims) ToMap() map[string]any {
 	}
 	if !c.ExpiresAt.IsZero() {
 		m[jwt.ExpirationKey] = c.ExpiresAt.UTC().Unix()
+	}
+	if !c.CentralExpiresAt.IsZero() {
+		m["ce"] = c.CentralExpiresAt.UTC().Unix()
 	}
 	if c.UserID != "" {
 		m["uid"] = c.UserID
@@ -81,6 +85,9 @@ func ClaimsFromToken(token jwt.Token) Claims {
 	c.Subject, _ = token.Subject()
 	c.IssuedAt, _ = token.IssuedAt()
 	c.ExpiresAt, _ = token.Expiration()
+	if central := intClaim(token, "ce"); central > 0 {
+		c.CentralExpiresAt = time.Unix(int64(central), 0)
+	}
 	c.Audience, _ = token.Audience()
 
 	var uid string

@@ -4,6 +4,15 @@ DataFolder = "./data"
 EnableExternalServices = false
 EnableInsightsCollector = false
 
+# 中心站来源地址；留空时使用本站账号登录。
+ServerManURL = ""
+# 本地账号注册开关，仅在 ServerManURL 留空时生效。
+EnableRegistration = false
+
+# EdgeOne 原生 D 类型，token/t 参数，十进制时间，有效时长 900 秒。
+MediaSigningKey = ""
+MediaPublicURL = ""
+
 [LastFM]
 Enabled = false
 

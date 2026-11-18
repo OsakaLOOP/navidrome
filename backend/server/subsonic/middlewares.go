@@ -185,6 +185,9 @@ func adminOnly(next http.Handler) http.Handler {
 }
 
 func validateCredentials(user *model.User, pass, token, salt, jwt string) error {
+	if !user.IsAdmin && conf.Server.ServerManURL != "" && jwt == "" {
+		return model.ErrInvalidAuth
+	}
 	valid := false
 
 	switch {

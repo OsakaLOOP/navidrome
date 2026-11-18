@@ -33,6 +33,8 @@ func (s *Server) musicAssetsHandler() http.Handler {
 		settings, _ := json.Marshal(map[string]any{
 			"SERVER_NAME": "ndFork", "SERVER_TYPE": "navidrome",
 			"SERVER_LOCK": true, "ANALYTICS_DISABLED": true,
+			"SERVERMAN_URL":        conf.Server.ServerManURL,
+			"REGISTRATION_ENABLED": conf.Server.ServerManURL == "" && conf.Server.EnableRegistration,
 		})
 		basePath, _ := json.Marshal(conf.Server.BasePath)
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")

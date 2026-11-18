@@ -14,6 +14,7 @@ import (
 	"github.com/navidrome/navidrome/conf"
 	"github.com/navidrome/navidrome/core/stream"
 	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/model/request"
 	"github.com/navidrome/navidrome/server"
 	"github.com/navidrome/navidrome/server/imghttp"
 )
@@ -22,6 +23,23 @@ import (
 func (api *Router) MediaRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Use(server.NoStore)
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token := r.URL.Query().Get("token"); token != "" {
+				if !server.VerifyMediaPath(r.URL.Path, token, r.URL.Query().Get("t")) {
+					http.Error(w, "媒体授权已失效", http.StatusUnauthorized)
+					return
+				}
+				admin, err := api.ds.User(r.Context()).FindFirstAdmin()
+				if err != nil {
+					http.Error(w, "媒体服务不可用", http.StatusServiceUnavailable)
+					return
+				}
+				r = r.WithContext(request.WithInternalAuth(r.Context(), admin.UserName))
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 	r.Use(checkRequiredParameters)
 	r.Use(authenticate(api.ds))
 	r.Group(func(r chi.Router) {
@@ -79,6 +97,11 @@ func (api *Router) mediaCover(w http.ResponseWriter, r *http.Request) {
 					strconv.Itoa(size), shape),
 				RawQuery: r.URL.RawQuery,
 			}
+			if r.URL.Query().Get("token") != "" {
+				query := canonical.Query()
+				query.Set("token", server.SignMediaPath(canonical.Path, query.Get("t")))
+				canonical.RawQuery = query.Encode()
+			}
 			http.Redirect(w, r, canonical.String(), http.StatusTemporaryRedirect)
 			return
 		}
@@ -126,6 +149,10 @@ func (api *Router) mediaStream(w http.ResponseWriter, r *http.Request) {
 	defer media.Close()
 	if format == "raw" {
 		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		w.Header().Set("ETag",`"`+mf.ID+"."+strconv.FormatInt(mf.UpdatedAt.UnixNano(),10)+`"`)
+		if r.URL.Query().Get("token") != "" {
+			w.Header().Set("CDN-Cache-Control", "public, max-age=31536000, immutable")
+		}
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Content-Duration", strconv.FormatFloat(float64(media.Duration()), 'G', -1, 32))
