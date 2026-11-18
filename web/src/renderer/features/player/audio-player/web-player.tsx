@@ -27,6 +27,7 @@ import {
     usePlayerStoreBase,
     usePlayerVolume,
 } from '/@/renderer/store';
+import { isSharedPlayback } from '/@/renderer/store/player.store';
 import { toast } from '/@/shared/components/toast/toast';
 import { QueueSong } from '/@/shared/types/domain-types';
 import { CrossfadeStyle, PlayerRepeat, PlayerStatus, PlayerStyle } from '/@/shared/types/types';
@@ -50,6 +51,8 @@ export function WebPlayer() {
     const { audioFadeOnStatusChange, preservePitch, transcode } = usePlaybackSettings();
 
     const pendingLocalSeekRef = useRef(-1);
+    const pendingTrackSeek = useRef<null | { id: string; seconds: number }>(null);
+    const readyTracks = useRef<Partial<Record<1 | 2, string>>>({});
 
     const [localPlayerStatus, setLocalPlayerStatus] = useState<PlayerStatus>(() => {
         if (playerHandoff.pendingLocalSeek > 0) {
@@ -329,16 +332,17 @@ export function WebPlayer() {
                     }
                 }
 
-                let type: 'fraction' | 'seconds' | undefined = undefined;
-
-                if (timestamp < 1) {
-                    type = 'seconds';
-                }
-
-                if (num === 1) {
-                    playerRef.current?.player1()?.ref?.seekTo(timestamp, type);
+                const store = usePlayerStoreBase.getState();
+                const id = store.getCurrentSong()?._uniqueId;
+                const slot = store.player.playerNum;
+                pendingTrackSeek.current = null;
+                if (!id) return;
+                const active =
+                    slot === 1 ? playerRef.current?.player1() : playerRef.current?.player2();
+                if (readyTracks.current[slot] === id && active?.ref) {
+                    active.ref.seekTo(timestamp, 'seconds');
                 } else {
-                    playerRef.current?.player2()?.ref?.seekTo(timestamp, type);
+                    pendingTrackSeek.current = { id, seconds: timestamp };
                 }
             },
             onPlayerStatus: async (properties) => {
@@ -529,6 +533,16 @@ export function WebPlayer() {
     const player1Url = useSongUrl(player1, num === 1, transcode);
     const player2Url = useSongUrl(player2, num === 2, transcode);
 
+    const seekOnReady = useCallback((reactPlayer: ReactPlayer, slot: 1 | 2, song?: QueueSong) => {
+        readyTracks.current[slot] = song?._uniqueId;
+        const pending = pendingTrackSeek.current;
+        const current = usePlayerStoreBase.getState().getCurrentSong();
+        if (pending && song && pending.id === song._uniqueId && pending.id === current?._uniqueId) {
+            pendingTrackSeek.current = null;
+            reactPlayer.seekTo(pending.seconds, 'seconds');
+        }
+    }, []);
+
     const applyPendingSeekIfNeeded = useCallback(
         (reactPlayer: ReactPlayer, activeSlot: 1 | 2) => {
             if (pendingLocalSeekRef.current <= 0) return;
@@ -546,6 +560,7 @@ export function WebPlayer() {
 
     const handlePlayer1Start = useCallback(
         async (reactPlayer: ReactPlayer) => {
+            seekOnReady(reactPlayer, 1, player1Url ? player1 : undefined);
             applyPendingSeekIfNeeded(reactPlayer, 1);
             if (!webAudio || player1Source) return;
             if (player1Url) {
@@ -564,11 +579,12 @@ export function WebPlayer() {
                 setPlayer1Source(source);
             }
         },
-        [applyPendingSeekIfNeeded, player1Source, player1Url, webAudio],
+        [applyPendingSeekIfNeeded, player1, player1Source, player1Url, seekOnReady, webAudio],
     );
 
     const handlePlayer2Start = useCallback(
         async (reactPlayer: ReactPlayer) => {
+            seekOnReady(reactPlayer, 2, player2Url ? player2 : undefined);
             applyPendingSeekIfNeeded(reactPlayer, 2);
             if (!webAudio || player2Source) return;
             if (player2Url) {
@@ -585,11 +601,12 @@ export function WebPlayer() {
                 setPlayer2Source(source);
             }
         },
-        [applyPendingSeekIfNeeded, player2Source, player2Url, webAudio],
+        [applyPendingSeekIfNeeded, player2, player2Source, player2Url, seekOnReady, webAudio],
     );
 
     const handleOnErrorPause = useCallback(() => {
-        mediaPause();
+        if (isSharedPlayback()) playerRef.current?.pause();
+        else mediaPause();
         toast.error({
             message: t('error.playbackPausedDueToError'),
         });

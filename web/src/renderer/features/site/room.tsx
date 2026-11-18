@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generatePath, Link } from 'react-router';
 import { createWithEqualityFn } from 'zustand/traditional';
@@ -22,9 +22,11 @@ import {
     usePlayerStoreBase,
 } from '/@/renderer/store/player.store';
 import { useTimestampStoreBase } from '/@/renderer/store/timestamp.store';
+import { logger } from '/@/renderer/utils/logger';
 import { ActionIcon } from '/@/shared/components/action-icon/action-icon';
 import { Button } from '/@/shared/components/button/button';
 import { Group } from '/@/shared/components/group/group';
+import { Icon } from '/@/shared/components/icon/icon';
 import { Image } from '/@/shared/components/image/image';
 import { Modal } from '/@/shared/components/modal/modal';
 import { Slider } from '/@/shared/components/slider/slider';
@@ -45,6 +47,7 @@ type Entry = {
     id: string;
     name: string;
     songId: string;
+    unavailable?: boolean;
 };
 
 type Room = {
@@ -71,6 +74,7 @@ const useRoom = createWithEqualityFn<{
     room: null | Room;
 }>(() => ({ busy: false, error: '', member: '', room: null }));
 let device = '';
+const membershipKey = 'ndfork-room-member';
 
 class SiteRoomConflict extends Error {
     constructor(public room: Room) {
@@ -86,6 +90,12 @@ export function RoomBridge() {
     const member = useRoom((state) => state.member);
     const serverId = useAuthStore((state) => state.currentServer?.id);
     const userId = useAuthStore((state) => state.currentServer?.userId);
+    const hydrated = usePlayerStoreBase((state) => state.hydrated);
+    useEffect(() => {
+        if (hydrated && userId && sessionStorage.getItem(membershipKey) === account()) {
+            void joinRoom().catch(report);
+        }
+    }, [hydrated, serverId, userId]);
     useEffect(() => {
         if (!member) return;
         if (member !== account()) {
@@ -96,6 +106,7 @@ export function RoomBridge() {
         const attachedDevice = device;
         let timer: ReturnType<typeof setTimeout>;
         let stopped = false;
+        let lastSync = performance.now();
         let song: QueueSong | undefined;
         const active = () => !stopped && device === attachedDevice && member === account();
         const poll = async () => {
@@ -110,27 +121,35 @@ export function RoomBridge() {
                 useRoom.setState({ error: '', room });
                 const entry = room.queue[room.index];
                 const transit = (performance.now() - started) / 2000;
-                if (!entry) song = undefined;
+                if (!entry || entry.unavailable) song = undefined;
                 else if (song?._uniqueId !== entry.id) {
                     const item = await api.controller.getSongDetail({
                         apiClientProps: { serverId },
                         query: { id: entry.songId },
                     });
+                    const latest = useRoom.getState().room;
                     if (
                         !active() ||
-                        useRoom.getState().room?.queue[useRoom.getState().room!.index]?.id !==
-                            entry.id
+                        latest?.session !== room.session ||
+                        latest.version !== room.version
                     )
                         return;
                     song = { ...item, _uniqueId: entry.id };
                 }
                 const position =
                     room.position +
-                    (room.playing ? transit + (room.serverTime - room.updatedAt) / 1000 : 0);
+                    (room.playing
+                        ? (performance.now() - started) / 1000 -
+                          transit +
+                          (room.serverTime - room.updatedAt) / 1000
+                        : 0);
+                lastSync = performance.now();
                 syncSharedSong(song, Math.min(entry?.duration ?? 0, position), room.playing);
             } catch (error) {
                 if (!active()) return;
+                if (!useRoom.getState().error) logger.warn('一起听同步失败', { error });
                 useRoom.setState({ error: (error as Error).message });
+                if (performance.now() - lastSync < 5000) return;
                 const player = usePlayerStoreBase.getState();
                 syncSharedSong(
                     player.getCurrentSong(),
@@ -141,10 +160,16 @@ export function RoomBridge() {
                 if (active()) timer = setTimeout(() => void poll(), 450);
             }
         };
+        const disconnect = (event: PageTransitionEvent) => {
+            if (!event.persisted)
+                void requestRoom('leave', {}, attachedDevice).catch(() => undefined);
+        };
+        window.addEventListener('pagehide', disconnect);
         void poll();
         return () => {
             stopped = true;
             clearTimeout(timer);
+            window.removeEventListener('pagehide', disconnect);
         };
     }, [member, serverId, userId]);
     useEffect(
@@ -178,7 +203,13 @@ export async function roomCommand(action: string, body: Record<string, unknown> 
         return next;
     } catch (error) {
         if (error instanceof SiteRoomConflict && device === requestDevice) {
-            useRoom.setState({ room: error.room });
+            const current = useRoom.getState().room;
+            if (
+                current?.session === room.session &&
+                (error.room.session !== current.session || error.room.version >= current.version)
+            ) {
+                useRoom.setState({ room: error.room });
+            }
             throw new Error(i18n.t('together.changed'));
         }
         throw error;
@@ -206,21 +237,50 @@ export function RoomPlayerButton() {
         state.error ? 'reconnecting' : state.room?.playing ? 'playing' : 'paused',
     );
     const [opened, setOpened] = useState(false);
+    const room = useRoom((state) => state.room);
+    const preview = useRoomPreview(!joined);
     if (window.SERVER_NAME !== 'ndFork') return null;
-    const label = joined
-        ? `${t('site.listenTogether')} · ${t(`together.${status}`)}`
-        : t('site.listenTogether');
+    const state = joined ? room : preview.data;
+    const current = state?.queue[state.index];
+    const label = t(joined ? 'site.listenTogether' : 'together.personalMode');
+    const summary = state
+        ? [
+              label,
+              t(`together.${joined ? status : state.playing ? 'playing' : 'paused'}`),
+              current && (current.unavailable ? t('together.unavailable') : current.name),
+              `${t('together.members')}: ${Object.keys(state.members).length}`,
+          ]
+              .filter(Boolean)
+              .join(' · ')
+        : label;
     return (
         <>
-            <ActionIcon
-                aria-label={label}
-                aria-pressed={joined}
-                icon="group"
-                onClick={() => setOpened(true)}
-                stopsPropagation
-                tooltip={{ label }}
-                variant={joined ? 'light' : 'subtle'}
-            />
+            <Group gap={2} wrap="nowrap">
+                <Button
+                    aria-expanded={opened}
+                    className={styles.mode}
+                    leftSection={<Icon icon={joined ? 'users' : 'user'} />}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        setOpened(true);
+                    }}
+                    size="compact-sm"
+                    tooltip={{ label: summary, multiline: true, w: 240 }}
+                    variant={joined ? 'filled' : 'default'}
+                >
+                    {label}
+                </Button>
+                {joined && (
+                    <ActionIcon
+                        aria-label={t('together.leave')}
+                        icon="signOut"
+                        onClick={leaveRoom}
+                        stopsPropagation
+                        tooltip={{ label: t('together.leave') }}
+                        variant="subtle"
+                    />
+                )}
+            </Group>
             <Modal
                 handlers={{
                     close: () => setOpened(false),
@@ -237,10 +297,11 @@ export function RoomPlayerButton() {
     );
 }
 
-export function RoomQueue() {
+export function RoomQueue({ onNavigate }: { onNavigate?: () => void } = {}) {
     const { t } = useTranslation();
     const room = useRoom((state) => state.room);
     const serverId = useAuthStore((state) => state.currentServer?.id);
+    const drag = useRef<null | { id: string; version: number }>(null);
     if (!room?.queue.length)
         return (
             <Text c="dimmed" size="sm">
@@ -250,10 +311,12 @@ export function RoomQueue() {
     return (
         <ol aria-label={t('together.queue')} className={styles.queue}>
             {room.queue.map((entry, index) => {
-                const cover = api.controller.getImageRequest({
-                    apiClientProps: { serverId },
-                    query: { id: entry.songId, itemType: LibraryItem.SONG, size: 96 },
-                });
+                const cover = !entry.unavailable
+                    ? api.controller.getImageRequest({
+                          apiClientProps: { serverId },
+                          query: { id: entry.songId, itemType: LibraryItem.SONG, size: 96 },
+                      })
+                    : undefined;
                 const current = index === room.index;
                 const move = (offset: number) => {
                     const order = room.queue.map((song) => song.id);
@@ -264,7 +327,33 @@ export function RoomQueue() {
                     <li
                         aria-current={current ? 'true' : undefined}
                         className={styles.entry}
+                        draggable
                         key={entry.id}
+                        onDragEnd={() => {
+                            drag.current = null;
+                        }}
+                        onDragOver={(event) => {
+                            if (drag.current) event.preventDefault();
+                        }}
+                        onDragStart={(event) => {
+                            drag.current = { id: entry.id, version: room.version };
+                            event.dataTransfer.setData('text/plain', entry.id);
+                            event.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDrop={(event) => {
+                            const item = drag.current;
+                            if (!item) return;
+                            event.preventDefault();
+                            drag.current = null;
+                            const order = room.queue.map((song) => song.id);
+                            const from = order.indexOf(item.id);
+                            if (from < 0 || from === index) return;
+                            order.splice(from, 1);
+                            order.splice(index, 0, item.id);
+                            void roomCommand('reorder', { order, version: item.version }).catch(
+                                report,
+                            );
+                        }}
                     >
                         <Image
                             alt=""
@@ -274,11 +363,12 @@ export function RoomQueue() {
                         />
                         <div className={styles.entryText}>
                             <Text fw={current ? 700 : 500} size="sm" truncate>
-                                {entry.name}
+                                {entry.unavailable ? t('together.unavailable') : entry.name}
                             </Text>
                             <Text c="dimmed" size="xs" truncate>
                                 {entry.artistId ? (
                                     <Link
+                                        onClick={onNavigate}
                                         to={generatePath(AppRoute.LIBRARY_ALBUM_ARTISTS_DETAIL, {
                                             albumArtistId: entry.artistId,
                                         })}
@@ -288,13 +378,14 @@ export function RoomQueue() {
                                 ) : (
                                     entry.artist
                                 )}
-                                {' · '}
-                                {t('together.addedBy', { name: entry.addedBy })}
+                                {entry.addedBy &&
+                                    ` · ${t('together.addedBy', { name: entry.addedBy })}`}
                             </Text>
                         </div>
                         <Group gap={3} wrap="nowrap">
                             <ActionIcon
                                 aria-label={t('site.play')}
+                                disabled={entry.unavailable}
                                 icon="mediaPlay"
                                 onClick={() =>
                                     void roomCommand('select', { entryId: entry.id }).catch(report)
@@ -343,18 +434,34 @@ function dispatchPlayerCommand(command: SharedPlaybackCommand) {
     const room = useRoom.getState().room;
     const entry = room?.queue[room.index];
     if (command.action === 'add') {
-        const action =
-            command.playType === Play.NEXT || command.playType === Play.NEXT_SHUFFLE
-                ? 'addNext'
-                : 'add';
-        void roomCommand(action, { songIds: command.songs?.map((song) => song.id) }).catch(report);
-    } else if (command.action === 'seek' && entry) {
+        const songIds = command.songs?.map((song) => song.id) ?? [];
+        if (!songIds.length) return true;
+        const now = command.playType === Play.NOW || command.playType === Play.SHUFFLE;
+        const next = command.playType === Play.NEXT || command.playType === Play.NEXT_SHUFFLE;
+        if (
+            command.playType === Play.SHUFFLE ||
+            command.playType === Play.NEXT_SHUFFLE ||
+            command.playType === Play.LAST_SHUFFLE
+        ) {
+            for (let index = songIds.length - 1; index > 0; index--) {
+                const other = Math.floor(Math.random() * (index + 1));
+                [songIds[index], songIds[other]] = [songIds[other], songIds[index]];
+            }
+        }
+        void roomCommand(now ? 'addNow' : next ? 'addNext' : 'add', {
+            edge: command.edge,
+            entryId: command.anchorId,
+            playSongId: command.playSongId,
+            songIds,
+        }).catch(report);
+    } else if (command.action === 'seek' && entry && !entry.unavailable) {
         void roomCommand('seek', {
             entryId: entry.id,
             position: Math.min(entry.duration, command.position ?? 0),
         }).catch(report);
     } else if (command.action === 'select' && entry) {
-        if (command.index === 0) void roomCommand('select', { entryId: entry.id }).catch(report);
+        if (command.index === 0 && !entry.unavailable)
+            void roomCommand('select', { entryId: entry.id }).catch(report);
     } else if (command.action !== 'seek' && command.action !== 'select') {
         void roomCommand(command.action).catch(report);
     }
@@ -370,6 +477,7 @@ async function joinRoom() {
         const room = await requestRoom('join', {}, joiningDevice);
         if (member !== account()) return;
         device = joiningDevice;
+        sessionStorage.setItem(membershipKey, member);
         beginSharedPlayback(dispatchPlayerCommand);
         useRoom.setState({ error: '', member, room });
     } finally {
@@ -381,6 +489,7 @@ function leaveRoom() {
     const leavingDevice = device;
     const restore = useRoom.getState().member === account();
     device = '';
+    sessionStorage.removeItem(membershipKey);
     useRoom.setState({ error: '', member: '', room: null });
     endSharedPlayback(restore);
     if (restore) void requestRoom('leave', {}, leavingDevice).catch(() => undefined);
@@ -418,16 +527,10 @@ function RoomContents({ compact, onNavigate }: { compact?: boolean; onNavigate?:
     const { busy, error, member, room } = useRoom();
     const selected = usePlayerSong();
     const serverId = useAuthStore((state) => state.currentServer?.id);
-    const userId = useAuthStore((state) => state.currentServer?.userId);
     const [search, setSearch] = useState('');
     const [term] = useDebouncedValue(search.trim(), 250);
     const [position, setPosition] = useState<null | number>(null);
-    const preview = useQuery({
-        enabled: !member && Boolean(userId),
-        queryFn: () => siteApi.request<Room>('/site/room'),
-        queryKey: ['site', 'room', serverId, userId],
-        refetchInterval: 5000,
-    });
+    const preview = useRoomPreview(!member);
     const results = useQuery(
         searchQueries.search({
             options: { enabled: Boolean(member && term) },
@@ -438,6 +541,15 @@ function RoomContents({ compact, onNavigate }: { compact?: boolean; onNavigate?:
     const state = member ? room : preview.data;
     const current = state?.queue[state.index];
     const next = state?.queue[state.index + 1];
+    const cover =
+        current && !current.unavailable
+            ? api.controller.getImageRequest({
+                  apiClientProps: { serverId },
+                  query: { id: current.songId, itemType: LibraryItem.SONG, size: 96 },
+              })
+            : undefined;
+    const clock = (seconds: number) =>
+        `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
     return (
         <Stack gap="md">
             <Group justify="space-between">
@@ -478,17 +590,47 @@ function RoomContents({ compact, onNavigate }: { compact?: boolean; onNavigate?:
             )}
             {current && (
                 <Stack gap="xs">
-                    <Text fw={700} truncate>
-                        {current.name} · {current.artist}
-                    </Text>
+                    <Group gap="xs" wrap="nowrap">
+                        {cover && (
+                            <Image
+                                alt=""
+                                containerClassName={styles.cover}
+                                imageRequest={cover}
+                                src={cover.url}
+                            />
+                        )}
+                        <Stack className={styles.entryText} gap={0}>
+                            <Text fw={700} truncate>
+                                {current.unavailable ? t('together.unavailable') : current.name}
+                            </Text>
+                            {current.artistId && (
+                                <Text size="sm" truncate>
+                                    <Link
+                                        onClick={onNavigate}
+                                        to={generatePath(AppRoute.LIBRARY_ALBUM_ARTISTS_DETAIL, {
+                                            albumArtistId: current.artistId,
+                                        })}
+                                    >
+                                        {current.artist}
+                                    </Link>
+                                </Text>
+                            )}
+                        </Stack>
+                        <Text c="dimmed" size="xs">
+                            {clock(position ?? state?.position ?? 0)} / {clock(current.duration)}
+                        </Text>
+                    </Group>
                     <Text c="dimmed" size="sm" truncate>
                         {t(state?.playing ? 'together.playing' : 'together.paused')}
-                        {next ? ` · ${t('site.next')}: ${next.name}` : ''}
+                        {next
+                            ? ` · ${t('site.next')}: ${next.unavailable ? t('together.unavailable') : next.name}`
+                            : ''}
                     </Text>
                     {member && (
                         <>
                             <Slider
                                 aria-label={t('together.progress')}
+                                disabled={current.unavailable}
                                 key={current.id}
                                 max={current.duration}
                                 onChange={setPosition}
@@ -598,7 +740,7 @@ function RoomContents({ compact, onNavigate }: { compact?: boolean; onNavigate?:
                     <Text fw={700}>
                         {t('together.queue')} ({room?.queue.length ?? 0})
                     </Text>
-                    <RoomQueue />
+                    <RoomQueue onNavigate={onNavigate} />
                 </>
             )}
             {!compact && state && (
@@ -615,4 +757,15 @@ function RoomContents({ compact, onNavigate }: { compact?: boolean; onNavigate?:
             )}
         </Stack>
     );
+}
+
+function useRoomPreview(enabled: boolean) {
+    const serverId = useAuthStore((state) => state.currentServer?.id);
+    const userId = useAuthStore((state) => state.currentServer?.userId);
+    return useQuery({
+        enabled: enabled && window.SERVER_NAME === 'ndFork' && Boolean(userId),
+        queryFn: () => siteApi.request<Room>('/site/room'),
+        queryKey: ['site', 'room', serverId, userId],
+        refetchInterval: 5000,
+    });
 }

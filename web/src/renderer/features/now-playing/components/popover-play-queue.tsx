@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { ItemListHandle } from '/@/renderer/components/item-list/types';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
+import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
 import { ActionIcon } from '/@/shared/components/action-icon/action-icon';
 import { Popover } from '/@/shared/components/popover/popover';
 import { Stack } from '/@/shared/components/stack/stack';
@@ -23,6 +24,7 @@ export const PopoverPlayQueue = ({
 }: PopoverPlayQueueProps = {}) => {
     const queueRef = useRef<ItemListHandle | null>(null);
     const [search, setSearch] = useState<string | undefined>(undefined);
+    const shared = useRoomActive();
 
     const [internalOpened, internalHandlers] = useDisclosure(false);
 
@@ -58,19 +60,23 @@ export const PopoverPlayQueue = ({
                 />
             </Popover.Target>
             <Popover.Dropdown h="600px" mah="80dvh" opacity={0.95} p="xs" w="560px">
-                <Stack gap={0} h="100%" w="100%">
-                    <PlayQueueListControls
-                        handleSearch={setSearch}
-                        searchTerm={search}
-                        tableRef={queueRef}
-                        type={ItemListKey.SIDE_QUEUE}
-                    />
-                    <PlayQueue
-                        listKey={ItemListKey.SIDE_QUEUE}
-                        ref={queueRef}
-                        searchTerm={search}
-                    />
-                </Stack>
+                {shared ? (
+                    <RoomQueue onNavigate={handleClose} />
+                ) : (
+                    <Stack gap={0} h="100%" w="100%">
+                        <PlayQueueListControls
+                            handleSearch={setSearch}
+                            searchTerm={search}
+                            tableRef={queueRef}
+                            type={ItemListKey.SIDE_QUEUE}
+                        />
+                        <PlayQueue
+                            listKey={ItemListKey.SIDE_QUEUE}
+                            ref={queueRef}
+                            searchTerm={search}
+                        />
+                    </Stack>
+                )}
             </Popover.Dropdown>
         </Popover>
     );

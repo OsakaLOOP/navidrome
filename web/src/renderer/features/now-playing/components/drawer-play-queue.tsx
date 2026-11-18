@@ -3,12 +3,16 @@ import { useRef, useState } from 'react';
 import { ItemListHandle } from '/@/renderer/components/item-list/types';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
+import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
 import { Flex } from '/@/shared/components/flex/flex';
 import { ItemListKey } from '/@/shared/types/types';
 
 export const DrawerPlayQueue = () => {
     const queueRef = useRef<ItemListHandle | null>(null);
     const [search, setSearch] = useState<string | undefined>(undefined);
+    const shared = useRoomActive();
+
+    if (shared) return <RoomQueue />;
 
     return (
         <Flex direction="column" h="100%">

@@ -13,6 +13,7 @@ import { lyricsQueries } from '/@/renderer/features/lyrics/api/lyrics-api';
 import { Lyrics } from '/@/renderer/features/lyrics/lyrics';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
+import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
 import { AppRoute } from '/@/renderer/router/routes';
 import {
     useCombinedLyricsAndVisualizer,
@@ -87,6 +88,7 @@ export function useSidebarPanels(): SidebarPanelType[] {
 }
 
 export const SidebarPlayQueue = () => {
+    const shared = useRoomActive();
     const tableRef = useRef<ItemListHandle | null>(null);
     const [search, setSearch] = useState<string | undefined>(undefined);
     const location = useLocation();
@@ -133,6 +135,7 @@ export const SidebarPlayQueue = () => {
 
     const renderPanel = (panelType: SidebarPanelType) => {
         if (panelType === 'queue') {
+            if (shared) return <RoomQueue />;
             return (
                 <Stack gap={0} h="100%" w="100%">
                     <PlayQueueListControls
@@ -255,7 +258,10 @@ export const SidebarPlayQueue = () => {
                     </SplitPane>
                 )
             ) : (
-                showQueue && (
+                showQueue &&
+                (shared ? (
+                    <RoomQueue />
+                ) : (
                     <Stack className={styles.queueOnly} gap={0} w="100%">
                         <PlayQueueListControls
                             handleSearch={setSearch}
@@ -273,7 +279,7 @@ export const SidebarPlayQueue = () => {
                             </div>
                         </Flex>
                     </Stack>
-                )
+                ))
             )}
         </Stack>
     );

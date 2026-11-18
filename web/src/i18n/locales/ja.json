@@ -1600,7 +1600,8 @@
         "reconnecting": "再接続中",
         "search": "曲を検索",
         "searching": "検索中…",
-        "sharedMode": "共有再生"
+        "sharedMode": "共有再生",
+        "unavailable": "ライブラリにアクセスできない曲"
     },
     "discussion": {
         "back": "プレーヤーに戻る",

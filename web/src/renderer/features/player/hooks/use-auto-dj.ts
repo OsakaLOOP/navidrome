@@ -5,6 +5,7 @@ import { eventEmitter } from '/@/renderer/events/event-emitter';
 import { runAutoDjAlbumIds } from '/@/renderer/features/player/auto-dj/auto-dj-albums';
 import { runAutoDjSongs } from '/@/renderer/features/player/auto-dj/auto-dj-songs';
 import { useIsPlayerFetching, usePlayer } from '/@/renderer/features/player/context/player-context';
+import { isRoomActive } from '/@/renderer/features/site/room';
 import {
     AUTO_DJ_STRATEGY,
     isShuffleEnabled,
@@ -52,7 +53,7 @@ export const useAutoDJ = () => {
                 return { index, remaining, song: queue.items[index] };
             },
             async (properties) => {
-                if (!settings.enabled) {
+                if (!settings.enabled || isRoomActive()) {
                     return;
                 }
 
@@ -108,12 +109,13 @@ export const useAutoDJ = () => {
                             queueAlbumIdSet,
                         });
 
-                        if (albumsToAdd.length > 0) {
+                        if (albumsToAdd.length > 0 && !isRoomActive()) {
                             await player.addToQueueByFetch(
                                 serverId,
                                 albumsToAdd,
                                 LibraryItem.ALBUM,
                                 Play.LAST,
+                                { personalOnly: true },
                             );
 
                             eventEmitter.emit('AUTODJ_QUEUE_ADDED', {
@@ -137,7 +139,7 @@ export const useAutoDJ = () => {
                         songStrategy,
                     });
 
-                    if (songsToAdd.length > 0) {
+                    if (songsToAdd.length > 0 && !isRoomActive()) {
                         player.addToQueueByData(songsToAdd, Play.LAST);
 
                         eventEmitter.emit('AUTODJ_QUEUE_ADDED', {

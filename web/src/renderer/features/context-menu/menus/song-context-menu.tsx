@@ -14,7 +14,7 @@ import { ShareAction } from '/@/renderer/features/context-menu/actions/share-act
 import { ShowInFileExplorerAction } from '/@/renderer/features/context-menu/actions/show-in-file-explorer-action';
 import { ContextMenuPreview } from '/@/renderer/features/context-menu/components/context-menu-preview';
 import { downloadOffline } from '/@/renderer/features/site/offline';
-import { roomCommand } from '/@/renderer/features/site/room';
+import { roomCommand, useRoomActive } from '/@/renderer/features/site/room';
 import { ContextMenu } from '/@/shared/components/context-menu/context-menu';
 import { toast } from '/@/shared/components/toast/toast';
 import { LibraryItem, Song } from '/@/shared/types/domain-types';
@@ -26,6 +26,7 @@ interface SongContextMenuProps {
 
 export const SongContextMenu = ({ items, type }: SongContextMenuProps) => {
     const { t } = useTranslation();
+    const shared = useRoomActive();
     const { ids } = useMemo(() => {
         const ids = items.map((item) => item.id);
         return { ids };
@@ -36,7 +37,7 @@ export const SongContextMenu = ({ items, type }: SongContextMenuProps) => {
             bottomStickyContent={<ContextMenuPreview items={items} itemType={type} />}
         >
             <PlayAction ids={ids} itemType={LibraryItem.SONG} songs={items} />
-            <PlayTrackRadioAction disabled={items.length > 1} song={items[0]} />
+            {!shared && <PlayTrackRadioAction disabled={items.length > 1} song={items[0]} />}
             <ContextMenu.Divider />
             <AddToPlaylistAction items={ids} itemType={LibraryItem.SONG} />
             <ContextMenu.Divider />
@@ -56,16 +57,30 @@ export const SongContextMenu = ({ items, type }: SongContextMenuProps) => {
                     >
                         {t('site.download')}
                     </ContextMenu.Item>
-                    <ContextMenu.Item
-                        leftIcon="queue"
-                        onSelect={() => {
-                            void roomCommand('add', { songIds: ids }).catch((e) =>
-                                toast.error({ message: e.message }),
-                            );
-                        }}
-                    >
-                        {t('site.addToRoom')}
-                    </ContextMenu.Item>
+                    {shared && (
+                        <ContextMenu.Item
+                            leftIcon="queue"
+                            onSelect={() => {
+                                void roomCommand('add', { songIds: ids }).catch((e) =>
+                                    toast.error({ message: e.message }),
+                                );
+                            }}
+                        >
+                            {t('site.addToRoom')}
+                        </ContextMenu.Item>
+                    )}
+                    {shared && (
+                        <ContextMenu.Item
+                            leftIcon="queue"
+                            onSelect={() => {
+                                void roomCommand('addNext', { songIds: ids }).catch((error) =>
+                                    toast.error({ message: error.message }),
+                                );
+                            }}
+                        >
+                            {t('together.addNext')}
+                        </ContextMenu.Item>
+                    )}
                     <ContextMenu.Item
                         leftIcon="info"
                         onSelect={() => {

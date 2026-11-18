@@ -21,7 +21,8 @@
         "reconnecting": "正在重新连接",
         "search": "搜索曲目",
         "searching": "正在搜索…",
-        "sharedMode": "共享播放"
+        "sharedMode": "共享播放",
+        "unavailable": "无权播放的曲目"
     },
     "discussion": {
         "back": "返回播放页",

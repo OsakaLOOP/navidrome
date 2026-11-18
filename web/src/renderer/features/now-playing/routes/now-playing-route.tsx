@@ -5,11 +5,20 @@ import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queu
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
 import { AnimatedPage } from '/@/renderer/features/shared/components/animated-page';
 import { PageErrorBoundary } from '/@/renderer/features/shared/components/page-error-boundary';
+import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
 import { ItemListKey } from '/@/shared/types/types';
 
 const NowPlayingRoute = () => {
     const [search, setSearch] = useState<string | undefined>(undefined);
     const tableRef = useRef<ItemListHandle | null>(null);
+    const shared = useRoomActive();
+
+    if (shared)
+        return (
+            <AnimatedPage>
+                <RoomQueue />
+            </AnimatedPage>
+        );
 
     return (
         <AnimatedPage>

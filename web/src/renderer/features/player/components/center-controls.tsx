@@ -56,7 +56,7 @@ export const CenterControls = () => {
         <>
             <div className={styles.controlsContainer}>
                 <div className={styles.buttonsContainer}>
-                    <StopButton />
+                    {!shared && <StopButton />}
                     {!shared && <ShuffleButton />}
                     <PreviousButton />
                     {skip?.enabled && <SkipBackwardButton />}

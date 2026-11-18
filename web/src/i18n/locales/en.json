@@ -22,7 +22,8 @@
         "reconnecting": "Reconnecting",
         "search": "Search for a song",
         "searching": "Searching…",
-        "sharedMode": "Shared playback"
+        "sharedMode": "Shared playback",
+        "unavailable": "Track unavailable in your library"
     },
     "discussion": {
         "back": "Back to player",

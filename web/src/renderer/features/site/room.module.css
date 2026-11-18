@@ -6,6 +6,10 @@
     list-style: none;
 }
 
+.mode {
+    flex-shrink: 0;
+}
+
 .entry {
     display: flex;
     gap: 0.625rem;

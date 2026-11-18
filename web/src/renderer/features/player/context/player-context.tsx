@@ -16,6 +16,7 @@ import {
     getSongsByFolder,
 } from '/@/renderer/features/player/utils';
 import { playlistsQueries } from '/@/renderer/features/playlists/api/playlists-api';
+import { isRoomActive } from '/@/renderer/features/site/room';
 import { songsQueries } from '/@/renderer/features/songs/api/songs-api';
 import {
     AddToQueueOptions,
@@ -310,7 +311,7 @@ export const PlayerProvider = ({ children }: { children: React.ReactNode }) => {
                 }
             };
 
-            if (!skipConfirmation && isReplaceQueueType(type)) {
+            if (!isRoomActive() && !skipConfirmation && isReplaceQueueType(type)) {
                 confirmQueueChange(addToQueue);
             } else {
                 addToQueue();
@@ -412,7 +413,8 @@ export const PlayerProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 };
 
-                if (!options?.skipConfirmation && isReplaceQueueType(type)) {
+                if (options?.personalOnly && isRoomActive()) return;
+                if (!isRoomActive() && !options?.skipConfirmation && isReplaceQueueType(type)) {
                     confirmQueueChange(addToQueue);
                 } else {
                     addToQueue();
@@ -740,6 +742,7 @@ export const PlayerProvider = ({ children }: { children: React.ReactNode }) => {
 
     const setQueue = useCallback(
         (data: Song[], index?: number, position?: number) => {
+            if (isRoomActive()) return;
             confirmQueueChange(() => {
                 logger.debug('Set queue', {
                     data: data.length,

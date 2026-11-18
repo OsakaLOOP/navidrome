@@ -13,10 +13,13 @@ import { SetFavoriteAction } from '/@/renderer/features/context-menu/actions/set
 import { SetRatingAction } from '/@/renderer/features/context-menu/actions/set-rating-action';
 import { ShareAction } from '/@/renderer/features/context-menu/actions/share-action';
 import { ContextMenuPreview } from '/@/renderer/features/context-menu/components/context-menu-preview';
+import { usePlayer } from '/@/renderer/features/player/context/player-context';
 import { downloadOffline } from '/@/renderer/features/site/offline';
+import { useRoomActive } from '/@/renderer/features/site/room';
 import { ContextMenu } from '/@/shared/components/context-menu/context-menu';
 import { toast } from '/@/shared/components/toast/toast';
 import { Album, LibraryItem } from '/@/shared/types/domain-types';
+import { Play } from '/@/shared/types/types';
 
 interface AlbumContextMenuProps {
     items: Album[];
@@ -25,6 +28,8 @@ interface AlbumContextMenuProps {
 
 export const AlbumContextMenu = ({ items, type }: AlbumContextMenuProps) => {
     const { t } = useTranslation();
+    const shared = useRoomActive();
+    const player = usePlayer();
     const { ids } = useMemo(() => {
         const ids = items.map((item) => item.id);
         return { ids };
@@ -35,7 +40,24 @@ export const AlbumContextMenu = ({ items, type }: AlbumContextMenuProps) => {
             bottomStickyContent={<ContextMenuPreview items={items} itemType={type} />}
         >
             <PlayAction ids={ids} itemType={LibraryItem.ALBUM} />
-            <PlayAlbumRadioAction album={items[0]} disabled={items.length > 1} />
+            {shared ? (
+                <ContextMenu.Item
+                    leftIcon="queue"
+                    onSelect={() => {
+                        if (items[0])
+                            void player.addToQueueByFetch(
+                                items[0]._serverId,
+                                ids,
+                                LibraryItem.ALBUM,
+                                Play.LAST,
+                            );
+                    }}
+                >
+                    {t('site.addToRoom')}
+                </ContextMenu.Item>
+            ) : (
+                <PlayAlbumRadioAction album={items[0]} disabled={items.length > 1} />
+            )}
             <ContextMenu.Divider />
             <AddToPlaylistAction items={ids} itemType={LibraryItem.ALBUM} />
             <ContextMenu.Divider />

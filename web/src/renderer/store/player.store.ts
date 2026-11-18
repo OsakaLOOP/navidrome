@@ -31,7 +31,10 @@ export interface PlayerState extends Actions, State {}
 
 export type SharedPlaybackCommand = {
     action: 'add' | 'next' | 'pause' | 'play' | 'previous' | 'seek' | 'select';
+    anchorId?: string;
+    edge?: 'bottom' | 'top';
     index?: number;
+    playSongId?: string;
     playType?: Play;
     position?: number;
     songs?: Song[];
@@ -169,7 +172,7 @@ export function endSharedPlayback(restore: boolean) {
             index: restore ? saved.player.index : -1,
             muted: player.muted,
             seekToTimestamp: uniqueSeekToTimestamp(position),
-            status: restore ? saved.player.status : PlayerStatus.PAUSED,
+            status: PlayerStatus.PAUSED,
             volume: player.volume,
         },
         queue: restore ? saved.queue : initialState.queue,
@@ -193,6 +196,10 @@ export function getDualPlayerSongs(
         player1: playerNum === 1 ? currentSong : nextSong,
         player2: playerNum === 2 ? currentSong : nextSong,
     };
+}
+
+export function isSharedPlayback() {
+    return Boolean(sharedPlayback);
 }
 
 // Helper function to check if shuffle is enabled
@@ -446,7 +453,8 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
         subscribeWithSelector(
             immer((set, get) => ({
                 addToQueueByType: (items, playType, playSongId) => {
-                    if (sharedPlayback?.({ action: 'add', playType, songs: items })) return;
+                    if (sharedPlayback?.({ action: 'add', playSongId, playType, songs: items }))
+                        return;
                     const newItems = items.map(toQueueSong);
                     const newUniqueIds = newItems.map((item) => item._uniqueId);
 
@@ -681,7 +689,16 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     }
                 },
                 addToQueueByUniqueId: (items, uniqueId, edge, playSongId) => {
-                    if (sharedPlayback?.({ action: 'add', songs: items })) return;
+                    if (
+                        sharedPlayback?.({
+                            action: 'add',
+                            anchorId: uniqueId,
+                            edge,
+                            playSongId,
+                            songs: items,
+                        })
+                    )
+                        return;
                     const newItems = items.map(toQueueSong);
                     const newUniqueIds = newItems.map((item) => item._uniqueId);
 
@@ -806,6 +823,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     }
                 },
                 clearQueue: () => {
+                    if (sharedPlayback) return;
                     set((state) => {
                         state.player.index = -1;
                         state.queue.default = [];
@@ -1606,7 +1624,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                     });
                 },
                 setQueue: (items, index, position) => {
-                    if (sharedPlayback?.({ action: 'add', songs: items })) return;
+                    if (sharedPlayback) return;
                     const newItems = items.map(toQueueSong);
                     const newUniqueIds = newItems.map((item) => item._uniqueId);
 
@@ -1618,6 +1636,7 @@ export const usePlayerStoreBase = createWithEqualityFn<PlayerState>()(
                         state.player.index = index ?? 0;
                         state.player.status = PlayerStatus.PLAYING;
                         state.player.playerNum = 1;
+                        state.player.seekToTimestamp = uniqueSeekToTimestamp(position ?? 0);
                         state.queue.default = newUniqueIds;
                     });
 
@@ -1997,6 +2016,7 @@ export type AddToQueueByUniqueId = {
 
 export type AddToQueueOptions = {
     filter?: (song: Song) => boolean;
+    personalOnly?: boolean;
     skipConfirmation?: boolean;
 };
 

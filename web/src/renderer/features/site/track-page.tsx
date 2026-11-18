@@ -8,15 +8,17 @@ import { roomCommand } from './room';
 import styles from './site.module.css';
 
 import { api } from '/@/renderer/api';
+import { usePlayer } from '/@/renderer/features/player/context/player-context';
 import { useAuthStore } from '/@/renderer/store/auth.store';
-import { usePlayerStoreBase } from '/@/renderer/store/player.store';
 import { Button } from '/@/shared/components/button/button';
 import { Group } from '/@/shared/components/group/group';
 import { Stack } from '/@/shared/components/stack/stack';
 import { Text } from '/@/shared/components/text/text';
 import { toast } from '/@/shared/components/toast/toast';
+import { Play } from '/@/shared/types/types';
 
 export default function TrackPage() {
+    const player = usePlayer();
     const { id } = useParams();
     const { t } = useTranslation();
     const serverId = useAuthStore((s) => s.currentServer?.id);
@@ -46,7 +48,7 @@ export default function TrackPage() {
                 </Group>
                 {data && (
                     <Group>
-                        <Button onClick={() => usePlayerStoreBase.getState().setQueue([data])}>
+                        <Button onClick={() => player.addToQueueByData([data], Play.NOW)}>
                             {t('site.play')}
                         </Button>
                         <Button

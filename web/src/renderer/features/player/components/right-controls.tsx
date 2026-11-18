@@ -99,11 +99,11 @@ export const RightControls = () => {
             </Group>
             <Group align="center" gap="xs" wrap="nowrap">
                 {!shared && <DlnaCastButton />}
-                <SleepTimerButton />
-                <PlayerConfig />
+                {!shared && <SleepTimerButton />}
+                {!shared && <PlayerConfig />}
                 <LyricsButton />
                 {showFavorites && <FavoriteButton />}
-                {!shared && <QueueButton />}
+                <QueueButton />
                 <RoomPlayerButton />
                 {playbackType === PlayerType.DLNA ? <DlnaVolumeButton /> : <VolumeButton />}
             </Group>

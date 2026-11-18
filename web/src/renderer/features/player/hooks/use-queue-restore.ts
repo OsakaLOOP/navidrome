@@ -16,6 +16,7 @@ import {
     usePlayerStore,
     useTimestampStoreBase,
 } from '/@/renderer/store';
+import { isSharedPlayback } from '/@/renderer/store/player.store';
 import { toast } from '/@/shared/components/toast/toast';
 import { PlayerStatus } from '/@/shared/types/types';
 
@@ -28,8 +29,14 @@ export const useQueueRestoreTimestamp = () => {
         {
             onQueueRestored: (properties) => {
                 const { position } = properties;
+                const trackId = usePlayerStore.getState().getCurrentSong()?._uniqueId;
 
                 setTimeout(() => {
+                    if (
+                        isSharedPlayback() ||
+                        usePlayerStore.getState().getCurrentSong()?._uniqueId !== trackId
+                    )
+                        return;
                     setTimestamp(position);
                     mediaSeekToTimestamp(position);
                 }, 100);
@@ -90,7 +97,11 @@ export const useInitialTimestampRestore = () => {
         startupSeekTargetUniqueIdRef.current = null;
 
         setTimeout(() => {
-            mediaSeekToTimestamp(seekTimestamp);
+            if (
+                !isSharedPlayback() &&
+                usePlayerStore.getState().getCurrentSong()?._uniqueId === currentUniqueId
+            )
+                mediaSeekToTimestamp(seekTimestamp);
         }, 100);
     }, [cancelStartupSeek, mediaSeekToTimestamp]);
 
@@ -152,6 +163,7 @@ export const useSaveQueue = () => {
 
     const mutation = useMutation({
         mutationFn: async () => {
+            if (isSharedPlayback()) return;
             if (!serverId) {
                 throw new Error(t('error.serverRequired'));
             }
