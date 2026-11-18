@@ -206,6 +206,9 @@ func (r *albumRepository) Exists(id string) (bool, error) {
 }
 
 func (r *albumRepository) Put(al *model.Album) error {
+	if err := r.applyMetadata("album", al.ID, al); err != nil {
+		return err
+	}
 	al.ImportedAt = time.Now()
 	id, err := r.put(al.ID, &dbAlbum{Album: al})
 	if err != nil {

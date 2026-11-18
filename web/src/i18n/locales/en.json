@@ -45,6 +45,24 @@
         "tooLong": "Comments can contain up to 4,000 characters.",
         "unlike": "Remove like"
     },
+    "metadataEditor": {
+        "confirmFiles_one": "Write these tags to {{count}} file?",
+        "confirmFiles_other": "Write these tags to {{count}} files?",
+        "coverPreview": "Cover preview",
+        "createArtist": "Create artist: {{name}}",
+        "emptyValue": "Empty",
+        "fileHelp_one": "Edits the tags in {{count}} file and rescans the affected folder.",
+        "fileHelp_other": "Edits the tags in {{count}} files and rescans the affected folders.",
+        "fileYear": "Recording year for all tracks",
+        "loading": "Loading metadata",
+        "lyricPreview": "Preview timed lyrics",
+        "lyricVersion": "Lyrics version",
+        "mainLyrics": "Main lyrics",
+        "noArtist": "Search for an artist",
+        "number": "{{field}} must be a whole number from 0 to 9999.",
+        "restoreCover": "Restore the cover from the music library?",
+        "review": "Review file changes"
+    },
     "action": {
         "addToFavorites": "Add to $t(entity.favorite, {\"count\": 2})",
         "addToPlaylist": "Add to $t(entity.playlist, {\"count\": 1})",

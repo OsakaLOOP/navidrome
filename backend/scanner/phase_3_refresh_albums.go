@@ -11,6 +11,7 @@ import (
 	ppl "github.com/google/go-pipeline/pkg/pipeline"
 	"github.com/navidrome/navidrome/log"
 	"github.com/navidrome/navidrome/model"
+	"github.com/navidrome/navidrome/persistence"
 )
 
 // phaseRefreshAlbums is responsible for refreshing albums that have been
@@ -88,6 +89,11 @@ func (p *phaseRefreshAlbums) filterUnmodified(album *model.Album) (*model.Album,
 		return nil, nil
 	}
 
+	for i := range mfs {
+		if err = persistence.RestoreMetadataSource(p.ctx, p.ds, "song", mfs[i].ID, &mfs[i]); err != nil {
+			return nil, err
+		}
+	}
 	newAlbum := mfs.ToAlbum()
 	if album.Equals(newAlbum) {
 		log.Trace("Scanner: album is up to date. Skipping", "album_id", album.ID,

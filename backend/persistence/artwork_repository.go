@@ -3,6 +3,9 @@ package persistence
 import (
 	"cmp"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"slices"
 	"time"
 
@@ -122,6 +125,27 @@ func (r *artworkRepository) GetItemArtwork(kind model.Kind, id, imageType string
 }
 
 func (r *artworkRepository) PutItemArtwork(ia *model.ItemArtwork) error {
+	var pin struct {
+		Hash string `db:"hash"`
+	}
+	err := r.db.NewQuery("SELECT hash FROM site_artwork WHERE kind={:kind} AND item_id={:id}").Bind(dbx.Params{"kind": ia.ItemKind, "id": ia.ItemID}).One(&pin)
+	if err == nil {
+		if ia.Source != "site" {
+			data, e := json.Marshal(ia)
+			if e != nil {
+				return e
+			}
+			if _, e = r.executeSQL(Update("site_artwork").Set("source", string(data)).Where(Eq{"kind": ia.ItemKind, "item_id": ia.ItemID})); e != nil {
+				return e
+			}
+		}
+		ia.Hash = pin.Hash
+		ia.Source = "site"
+		ia.SourcePath = ""
+		ia.RefMtime = 0
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	ia.ImageType = cmp.Or(ia.ImageType, model.ImageTypePrimary)
 	ia.UpdatedAt = time.Now()
 	// PutItemArtwork records the outcome of an attempt, so an unset attempted_at is now.

@@ -29,8 +29,9 @@ type MediaFile struct {
 
 	// AlbumImage is the parent album's artwork state, hydrated alongside the track's own so a
 	// song's Jellyfin album-art tag can be pixel-versioned without a second query.
-	AlbumImage ItemImage `structs:"-" json:"-" hash:"ignore"`
-	CoverArt   string    `structs:"-" json:"coverArtId,omitempty" hash:"ignore"`
+	AlbumImage      ItemImage `structs:"-" json:"-" hash:"ignore"`
+	CoverArt        string    `structs:"-" json:"coverArtId,omitempty" hash:"ignore"`
+	SourceUpdatedAt time.Time `structs:"source_updated_at" json:"-" hash:"ignore"`
 
 	ID          string `structs:"id"  json:"id" hash:"ignore"`
 	PID         string `structs:"pid" json:"-" hash:"ignore"`
@@ -139,7 +140,7 @@ func (mf MediaFile) CoverArtID() ArtworkID {
 		return mf.AlbumCoverArtID()
 	}
 	// If it has a cover art, return it (if feature is disabled, skip)
-	if mf.HasCoverArt && conf.Server.EnableMediaFileCoverArt {
+	if (mf.HasCoverArt || mf.ImageHash != "") && conf.Server.EnableMediaFileCoverArt {
 		return artworkIDFromMediaFile(mf)
 	}
 	// Otherwise fallback to disc (if available) or album cover

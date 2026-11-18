@@ -44,6 +44,22 @@
         "tooLong": "评论最多 4000 字。",
         "unlike": "取消点赞"
     },
+    "metadataEditor": {
+        "confirmFiles_other": "将以下标签写入 {{count}} 个文件？",
+        "coverPreview": "封面预览",
+        "createArtist": "创建歌手：{{name}}",
+        "emptyValue": "空白",
+        "fileHelp_other": "写入 {{count}} 个文件的标签后，重新扫描相关文件夹。",
+        "fileYear": "所有曲目的年份",
+        "loading": "正在读取元数据",
+        "lyricPreview": "预览歌词时间轴",
+        "lyricVersion": "歌词版本",
+        "mainLyrics": "原文歌词",
+        "noArtist": "搜索歌手",
+        "number": "{{field}}须为 0 至 9999 的整数。",
+        "restoreCover": "恢复音乐库中的基础封面？",
+        "review": "确认文件改动"
+    },
     "action": {
         "editPlaylist": "编辑 $t(entity.playlist, {\"count\": 1})",
         "moveToTop": "移至顶部",

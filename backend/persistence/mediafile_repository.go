@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -183,6 +184,20 @@ func (r *mediaFileRepository) Exists(id string) (bool, error) {
 }
 
 func (r *mediaFileRepository) Put(m *model.MediaFile) error {
+	if m.ID == "" {
+		var existing struct{ ID string }
+		err := r.queryOne(r.newSelect().Columns("id").Where(Eq{"path": m.Path, "library_id": m.LibraryID}), &existing)
+		if err != nil && !errors.Is(err, model.ErrNotFound) {
+			return err
+		}
+		m.ID = existing.ID
+	}
+	if m.SourceUpdatedAt.IsZero() {
+		m.SourceUpdatedAt = m.UpdatedAt
+	}
+	if err := r.applyMetadata("song", m.ID, m); err != nil {
+		return err
+	}
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
 	}

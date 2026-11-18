@@ -59,12 +59,11 @@ func CallScan(ctx context.Context, ds model.DataStore, pls playlists.Playlists, 
 	if err != nil {
 		return nil, err
 	}
-	defer release()
-
 	ctx = auth.WithAdminUser(ctx, ds)
 	progress := make(chan *ProgressInfo, 100)
 	go func() {
 		defer close(progress)
+		defer release()
 		scanner := &scannerImpl{ds: ds, pls: pls}
 		scanner.scanFolders(ctx, fullScan, targets, progress)
 	}()

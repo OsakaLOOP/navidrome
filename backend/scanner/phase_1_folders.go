@@ -20,6 +20,7 @@ import (
 	"github.com/navidrome/navidrome/log"
 	"github.com/navidrome/navidrome/model"
 	"github.com/navidrome/navidrome/model/metadata"
+	"github.com/navidrome/navidrome/persistence"
 	"github.com/navidrome/navidrome/utils"
 	"github.com/navidrome/navidrome/utils/pl"
 	"github.com/navidrome/navidrome/utils/slice"
@@ -248,7 +249,7 @@ func (p *phaseFolders) processFolder(entry *folderEntry) (*folderEntry, error) {
 				p.state.sendWarning(fmt.Sprintf("Error getting file info for %s/%s: %v", entry.path, af.Name(), err))
 				return entry, nil
 			}
-			if info.ModTime().After(dbTrack.UpdatedAt) || dbTrack.Missing {
+			if info.ModTime().After(dbTrack.SourceUpdatedAt) || dbTrack.Missing {
 				filesToImport[fullPath] = dbTrack
 			}
 		}
@@ -299,6 +300,7 @@ func (p *phaseFolders) loadTagsFromFiles(entry *folderEntry, toImport map[string
 			prevAlbumID := ""
 			if prev := toImport[filePath]; prev != nil {
 				prevAlbumID = prev.AlbumID
+				track.ID = prev.ID
 			} else {
 				prevAlbumID = md.AlbumID(track, p.prevAlbumPIDConf)
 			}
@@ -405,6 +407,32 @@ func (p *phaseFolders) persistFolder(ctx context.Context, tx model.DataStore, en
 
 	// Save all new/modified albums to DB. Their information will be incomplete, but they will be refreshed later
 	for i := range entry.albums {
+		album := &entry.albums[i]
+		if previous := albumIDMap[album.ID]; previous != "" {
+			if _, err := albumRepo.Get(album.ID); errors.Is(err, model.ErrNotFound) {
+				oldTracks, err := mfRepo.GetAll(model.QueryOptions{Filters: squirrel.Eq{"album_id": previous}})
+				if err != nil {
+					return err
+				}
+				moved := map[string]bool{}
+				for _, track := range entry.tracks {
+					if track.AlbumID == album.ID {
+						moved[track.Path] = true
+					}
+				}
+				if len(oldTracks) > 0 && len(oldTracks) == len(moved) && !slices.ContainsFunc(oldTracks, func(track model.MediaFile) bool { return !moved[track.Path] }) {
+					if err := persistence.MoveSiteAlbum(ctx, tx, previous, album.ID); err != nil {
+						return err
+					}
+				} else {
+					delete(albumIDMap, album.ID)
+				}
+			} else if err == nil {
+				delete(albumIDMap, album.ID)
+			} else {
+				return err
+			}
+		}
 		err = p.persistAlbum(albumRepo, &entry.albums[i], albumIDMap)
 		if err != nil {
 			return err

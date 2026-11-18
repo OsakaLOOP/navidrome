@@ -237,9 +237,16 @@ func (r *artistRepository) Exists(id string) (bool, error) {
 }
 
 func (r *artistRepository) Put(a *model.Artist, colsToUpdate ...string) error {
+	if a.CreatedAt == nil {
+		a.CreatedAt = new(time.Now())
+	}
+	if a.UpdatedAt == nil {
+		a.UpdatedAt = new(time.Now())
+	}
+	if err := r.applyMetadata("artist", a.ID, a); err != nil {
+		return err
+	}
 	dba := &dbArtist{Artist: a}
-	dba.CreatedAt = new(time.Now())
-	dba.UpdatedAt = dba.CreatedAt
 	_, err := r.put(dba.ID, dba, colsToUpdate...)
 	return err
 }
@@ -368,7 +375,7 @@ func (r *artistRepository) GetIndex(includeMissing bool, libraryIds []int, roles
 }
 
 func (r *artistRepository) purgeEmpty() error {
-	orphanFilter := "id not in (select artist_id from album_artists)"
+	orphanFilter := "id not in (select artist_id from album_artists) and id not in (select artist_id from media_file_artists)"
 
 	// Collect uploaded image filenames before deleting
 	sel := Select("uploaded_image").From(r.tableName).
