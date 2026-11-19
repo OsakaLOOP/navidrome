@@ -41,6 +41,15 @@ func (s *Server) mountSiteRoutes() {
 		r.Get("/privacy", s.getPrivacy)
 		r.Put("/privacy", s.savePrivacy)
 		r.Get("/profile/{userId}", s.siteProfile)
+		r.Get("/profile/{userId}/history", s.siteHistory)
+		r.Get("/profile/{userId}/avatar", s.siteAvatar)
+		r.Put("/profile", s.saveSiteProfile)
+		r.Put("/profile/avatar", s.saveSiteAvatar)
+		r.Delete("/profile/avatar", s.deleteSiteAvatar)
+		r.Get("/users", s.siteUsers)
+		r.Put("/friends/{userId}", s.addSiteFriend)
+		r.Delete("/friends/{userId}", s.removeSiteFriend)
+		r.Get("/timeline", s.siteTimeline)
 		r.Get("/room", s.getRoom)
 		r.Post("/room", s.changeRoom)
 	})
@@ -48,7 +57,8 @@ func (s *Server) mountSiteRoutes() {
 
 func (s *Server) siteIdentity(w http.ResponseWriter, r *http.Request) {
 	u, _ := request.UserFrom(r.Context())
-	var subject, email, name string
+	var subject, email, name, nickname, bio string
+	var avatarVersion int64
 	err := db.Db().QueryRowContext(r.Context(), "SELECT subject,email,name FROM site_identity WHERE user_id=?", u.ID).Scan(&subject, &email, &name)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		siteError(w, 500, "读取绑定失败")
@@ -57,7 +67,12 @@ func (s *Server) siteIdentity(w http.ResponseWriter, r *http.Request) {
 	if subject == "" {
 		name, email = u.Name, u.Email
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"subject": subject, "email": email, "name": name, "userId": u.ID, "isAdmin": u.IsAdmin})
+	err = db.Db().QueryRowContext(r.Context(), "SELECT nickname,bio,avatar_version FROM site_profile WHERE user_id=?", u.ID).Scan(&nickname, &bio, &avatarVersion)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		siteError(w, 500, "读取个人资料失败")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"subject": subject, "email": email, "name": name, "userId": u.ID, "isAdmin": u.IsAdmin, "nickname": nickname, "bio": bio, "avatarVersion": avatarVersion})
 }
 
 // 旧账号归属通过密码核验；中心身份来自服务端验证的会话。

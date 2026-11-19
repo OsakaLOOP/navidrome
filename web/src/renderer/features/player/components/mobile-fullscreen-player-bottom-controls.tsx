@@ -42,7 +42,7 @@ export const MobileFullscreenPlayerBottomControls = memo(
             <div className={styles.bottomControlsBar}>
                 <Group className={styles.bottomControlsGroup} gap={0}>
                     {shared ? (
-                        <RoomPlayerButton />
+                        <RoomPlayerButton position="top" />
                     ) : (
                         <ActionIcon
                             className={styles.bottomControlIcon}

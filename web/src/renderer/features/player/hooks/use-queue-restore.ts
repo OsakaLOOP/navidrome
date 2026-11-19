@@ -2,12 +2,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { t } from 'i18next';
 import { useCallback, useEffect, useRef } from 'react';
 
+import { confirmServerQueueRestore } from './confirm-server-queue-restore';
+
 import { api } from '/@/renderer/api';
 import { usePlayerEvents } from '/@/renderer/features/player/audio-player/hooks/use-player-events';
-import { usePlayer } from '/@/renderer/features/player/context/player-context';
 import { songsQueries } from '/@/renderer/features/songs/api/songs-api';
 import {
     setTimestamp,
+    useAuthStore,
     useCurrentServerId,
     usePlayerActions,
     usePlayerHydrated,
@@ -202,11 +204,11 @@ export const useSaveQueue = () => {
 
 export const useRestoreQueue = () => {
     const serverId = useCurrentServerId();
-    const player = usePlayer();
     const queryClient = useQueryClient();
 
     const handleRestoreQueue = useCallback(async () => {
-        if (!serverId) return;
+        if (!serverId || isSharedPlayback()) return;
+        const account = useAuthStore.getState().currentServer?.userId;
 
         try {
             const queue = await queryClient.fetchQuery(
@@ -214,11 +216,21 @@ export const useRestoreQueue = () => {
             );
 
             if (queue) {
-                player.setQueue(
-                    queue.entry,
-                    queue.currentIndex,
-                    queue.positionMs !== undefined ? queue.positionMs / 1000 : undefined,
-                );
+                const restore = () => {
+                    const server = useAuthStore.getState().currentServer;
+                    if (isSharedPlayback() || server?.id !== serverId || server.userId !== account)
+                        return;
+                    usePlayerStore
+                        .getState()
+                        .setQueue(
+                            queue.entry,
+                            queue.currentIndex,
+                            queue.positionMs !== undefined ? queue.positionMs / 1000 : undefined,
+                        );
+                };
+                if (usePlayerStore.getState().getQueue().items.length)
+                    confirmServerQueueRestore(false, restore);
+                else restore();
             }
         } catch (error) {
             toast.error({
@@ -226,7 +238,7 @@ export const useRestoreQueue = () => {
                 title: t('error.genericError'),
             });
         }
-    }, [player, queryClient, serverId]);
+    }, [queryClient, serverId]);
 
     return handleRestoreQueue;
 };

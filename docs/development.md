@@ -91,7 +91,15 @@ npm --prefix backend/ui ci --ignore-scripts --no-audit --no-fund
 | 音乐站 | `http://127.0.0.1:4533/music/` |
 | 日志 | `.local/server.log`、`.local/server-error.log` |
 
-从项目根目录启动：
+从项目根目录启动开发服务（默认同时启动后端与 Vite 前端，也支持单独启动）：
+
+```powershell
+./dev.ps1        # 同时启动后端（4533）与 Web 前端（5173，已代理 /api、/auth、/rest、/media、/site、/settings.js 等）
+./dev.ps1 api    # 仅启动 Go 后端（别名: backend）
+./dev.ps1 web    # 仅启动 Web 前端（别名: frontend）
+```
+
+如需运行已构建的独立可执行文件，从项目根目录启动：
 
 ```powershell
 ./backend/navidrome.exe --configfile .local/navidrome.toml

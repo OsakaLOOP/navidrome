@@ -24,6 +24,7 @@ import { MobileFullscreenPlayerControls } from '/@/renderer/features/player/comp
 import { MobileFullscreenPlayerHeader } from '/@/renderer/features/player/components/mobile-fullscreen-player-header';
 import { MobileFullscreenPlayerMetadata } from '/@/renderer/features/player/components/mobile-fullscreen-player-metadata';
 import { MobileFullscreenPlayerProgress } from '/@/renderer/features/player/components/mobile-fullscreen-player-progress';
+import { openImportQueueModal } from '/@/renderer/features/playlists/components/import-queue-modal';
 import {
     useIsRadioActive,
     useRadioPlayer,
@@ -31,7 +32,7 @@ import {
 import { useSetFavorite } from '/@/renderer/features/shared/hooks/use-set-favorite';
 import { useSetRating } from '/@/renderer/features/shared/hooks/use-set-rating';
 import { DiscussionPanel } from '/@/renderer/features/site/discussion-panel';
-import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
+import { RoomQueuePanel, useRoomActive } from '/@/renderer/features/site/room';
 import { useFastAverageColor } from '/@/renderer/hooks';
 import {
     useCurrentServer,
@@ -565,6 +566,15 @@ export const MobileFullscreenPlayer = () => {
                                 size="sm"
                                 variant={isPageHovered ? 'default' : 'subtle'}
                             />
+                            {!shared && (
+                                <ActionIcon
+                                    aria-label={t('queueImport.title')}
+                                    icon="mediaPlayLast"
+                                    onClick={() => openImportQueueModal()}
+                                    tooltip={{ label: t('queueImport.title') }}
+                                    variant="subtle"
+                                />
+                            )}
                             <ActionIcon
                                 icon="x"
                                 iconProps={{ size: 'xl' }}
@@ -573,11 +583,9 @@ export const MobileFullscreenPlayer = () => {
                                 variant={isPageHovered ? 'default' : 'subtle'}
                             />
                         </div>
-                        <Stack gap={0} h="100%" w="100%">
+                        <Stack gap={0} h="100%" style={{ minHeight: 0 }} w="100%">
                             {shared ? (
-                                <div className={styles.lyricsContent}>
-                                    <RoomQueue />
-                                </div>
+                                <RoomQueuePanel />
                             ) : (
                                 <PlayQueue
                                     listKey={ItemListKey.FULL_SCREEN}

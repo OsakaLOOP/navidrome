@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/navidrome/navidrome/conf"
@@ -23,12 +24,30 @@ func NoStore(next http.Handler) http.Handler {
 	})
 }
 
+// requireTrailingSlash 保证使用相对资源路径的入口在缺少尾斜杠时跳转至带尾斜杠地址。
+func requireTrailingSlash(root string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == root {
+				target := root + "/"
+				if r.URL.RawQuery != "" {
+					target += "?" + r.URL.RawQuery
+				}
+				w.Header().Set("Cache-Control", "no-store")
+				http.Redirect(w, r, target, http.StatusFound)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (s *Server) musicAssetsHandler() http.Handler {
 	assets, _ := fs.Sub(resources.FS(), "music")
 	root := path.Join(conf.Server.BasePath, "/music")
 	files := http.StripPrefix(root, http.FileServer(http.FS(assets)))
 	r := chi.NewRouter()
-	r.Use(NoStore)
+	r.Use(NoStore, requireTrailingSlash(root))
 	r.Get("/settings.js", func(w http.ResponseWriter, r *http.Request) {
 		settings, _ := json.Marshal(map[string]any{
 			"SERVER_NAME": "ndFork", "SERVER_TYPE": "navidrome",
@@ -41,8 +60,8 @@ func (s *Server) musicAssetsHandler() http.Handler {
 		_, _ = fmt.Fprintf(w, "Object.assign(window, %s); window.SERVER_URL = location.origin + %s;", settings, basePath)
 	})
 	r.Handle("/*", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if versionedAssetName.MatchString(path.Base(r.URL.Path)) {
-			if _, err := fs.Stat(assets, r.URL.Path[len(root)+1:]); err == nil {
+		if rel, ok := strings.CutPrefix(r.URL.Path, root+"/"); ok && versionedAssetName.MatchString(path.Base(r.URL.Path)) {
+			if _, err := fs.Stat(assets, rel); err == nil {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 		}

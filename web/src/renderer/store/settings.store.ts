@@ -828,6 +828,11 @@ export const ScrobbleMinimumMode = {
 
 export type ScrobbleMinimumMode = (typeof ScrobbleMinimumMode)[keyof typeof ScrobbleMinimumMode];
 
+const ListenTogetherSettingsSchema = z.object({
+    notifyOnBroadcast: z.boolean(),
+    notifyOnStart: z.boolean(),
+});
+
 /**
  * This schema is used for validation of the imported settings json
  */
@@ -838,6 +843,10 @@ export const ValidationSettingsStateSchema = z.object({
     font: FontSettingsSchema,
     general: GeneralSettingsSchema,
     hotkeys: HotkeysSettingsSchema,
+    listenTogether: ListenTogetherSettingsSchema.default({
+        notifyOnBroadcast: true,
+        notifyOnStart: true,
+    }),
     lists: z.record(z.nativeEnum(ItemListKey), ItemListConfigSchema),
     lyrics: LyricsSettingsSchema,
     lyricsDisplay: z.record(z.string(), LyricsDisplaySettingsSchema),
@@ -1484,6 +1493,10 @@ const initialState: SettingsState = {
             zoomOut: { allowGlobal: true, hotkey: '', isGlobal: false },
         },
         globalMediaHotkeys: true,
+    },
+    listenTogether: {
+        notifyOnBroadcast: true,
+        notifyOnStart: true,
     },
     lists: {
         ['albumDetail']: {
@@ -2931,10 +2944,17 @@ export const useSettingsStore = createWithEqualityFn<SettingsSlice>()(
                     });
                 }
 
+                if (version < 35) {
+                    state.listenTogether ??= {
+                        notifyOnBroadcast: true,
+                        notifyOnStart: true,
+                    };
+                }
+
                 return persistedState;
             },
             name: 'store_settings',
-            version: 34,
+            version: 35,
         },
     ),
 );
@@ -3253,3 +3273,6 @@ export const useButterchurnSettings = () => {
 
 export const useMicrotonalPitchControls = () =>
     useSettingsStore((state) => state.general.microtonalPitchControls, shallow);
+
+export const useListenTogetherSettings = () =>
+    useSettingsStore((state) => state.listenTogether, shallow);

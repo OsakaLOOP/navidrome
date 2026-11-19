@@ -28,6 +28,7 @@ import {
     LuArrowUpNarrowWide,
     LuArrowUpToLine,
     LuAudioLines,
+    LuBell,
     LuBookOpen,
     LuBraces,
     LuCamera,
@@ -231,6 +232,39 @@ const LastfmLogoIcon = forwardRef<HTMLImageElement, LogoImgProps>(
     ),
 );
 
+/** 一起听图标（电台波浪与左下支架配合右下角同步角标） */
+const ListenTogetherIcon = forwardRef<SVGSVGElement, IconBaseProps>(
+    ({ size = '1em', style, ...props }, ref) => (
+        <svg
+            height={size}
+            ref={ref}
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.5"
+            style={{ ...style, fill: 'none' }}
+            viewBox="0 0 24 24"
+            width={size}
+            xmlns="http://www.w3.org/2000/svg"
+            {...props}
+            fill="none"
+        >
+            <circle cx="12" cy="9" r="2" />
+            <path d="M7.4 12.86a6 6 0 0 1 0-7.72" />
+            <path d="M4.34 15.43a10 10 0 0 1 0-12.86" />
+            <path d="M16.6 5.14a6 6 0 0 1 1.11 5.71" />
+            <path d="M19.66 2.57a10 10 0 0 1 1.85 9.52" />
+            <path d="M12 11 8 22" />
+            <path d="M9.45 18H11.8" />
+            <path d="m12 11 .6 1.65" />
+            <path d="M21.8 17a3.75 3.75 0 0 0-7.1 0" />
+            <path d="M14.7 14.7V17H17" />
+            <path d="M14.7 19.5a3.75 3.75 0 0 0 7.1 0" />
+            <path d="M21.8 21.8v-2.3h-2.3" />
+        </svg>
+    ),
+);
+
 export const AppIcon = {
     add: LuPlus,
     album: LuDisc3,
@@ -254,6 +288,7 @@ export const AppIcon = {
     arrowUpToLine: LuArrowUpToLine,
     artist: LuUserPen,
     audioLines: LuAudioLines,
+    bell: LuBell,
     brandGitHub: LuGithub,
     brandLastfm: LastfmLogoIcon,
     brandListenBrainz: ListenBrainzLogoIcon,
@@ -315,6 +350,7 @@ export const AppIcon = {
     layoutTable: LuTable,
     library: LuLibrary,
     list: LuList,
+    listenTogether: ListenTogetherIcon,
     listInfinite: LuInfinity,
     listPaginated: LuArrowRightToLine,
     lock: LuLock,

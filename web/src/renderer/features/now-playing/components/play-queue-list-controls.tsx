@@ -11,6 +11,7 @@ import { ItemListHandle } from '/@/renderer/components/item-list/types';
 import { usePlayer } from '/@/renderer/features/player/context/player-context';
 import { useRestoreQueue, useSaveQueue } from '/@/renderer/features/player/hooks/use-queue-restore';
 import { openCreatePrefilledPlaylistModal } from '/@/renderer/features/playlists/components/create-playlist-form';
+import { openImportQueueModal } from '/@/renderer/features/playlists/components/import-queue-modal';
 import {
     ListConfigMenu,
     SONG_DISPLAY_TYPES,
@@ -185,6 +186,14 @@ export const PlayQueueListControls = ({
                 </span>
                 <span className={styles.overflowTier2}>
                     <ActionIcon
+                        aria-label={t('queueImport.title')}
+                        icon="mediaPlayLast"
+                        iconProps={{ size: 'lg' }}
+                        onClick={() => openImportQueueModal()}
+                        tooltip={{ label: t('queueImport.title') }}
+                        variant="subtle"
+                    />
+                    <ActionIcon
                         icon="goToItem"
                         iconProps={{ size: 'lg' }}
                         onClick={handleJumpToCurrent}
@@ -241,6 +250,12 @@ export const PlayQueueListControls = ({
                             )}
                             {showTier2Menu && (
                                 <>
+                                    <DropdownMenu.Item
+                                        leftSection={<Icon icon="mediaPlayLast" />}
+                                        onClick={() => openImportQueueModal()}
+                                    >
+                                        {t('queueImport.title')}
+                                    </DropdownMenu.Item>
                                     <DropdownMenu.Item
                                         leftSection={<Icon icon="goToItem" />}
                                         onClick={handleJumpToCurrent}

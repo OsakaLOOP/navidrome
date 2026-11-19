@@ -6,11 +6,12 @@ import { ServerType } from '/@/shared/types/types';
 export const siteApi = {
     async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
         const server = useAuthStore.getState().currentServer;
+        const file = body instanceof Blob ? body : undefined;
         const response = await fetch(`${server?.url || window.SERVER_URL}${path}`, {
-            body: body === undefined ? undefined : JSON.stringify(body),
+            body: file ?? (body === undefined ? undefined : JSON.stringify(body)),
             credentials: 'include',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': file?.type || 'application/json',
                 ...(server?.ndCredential
                     ? { 'x-nd-authorization': `Bearer ${server.ndCredential}` }
                     : {}),

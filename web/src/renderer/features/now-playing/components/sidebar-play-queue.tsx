@@ -13,7 +13,7 @@ import { lyricsQueries } from '/@/renderer/features/lyrics/api/lyrics-api';
 import { Lyrics } from '/@/renderer/features/lyrics/lyrics';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
-import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
+import { RoomQueueBanner, RoomQueuePanel, useRoomActive } from '/@/renderer/features/site/room';
 import { AppRoute } from '/@/renderer/router/routes';
 import {
     useCombinedLyricsAndVisualizer,
@@ -135,7 +135,7 @@ export const SidebarPlayQueue = () => {
 
     const renderPanel = (panelType: SidebarPanelType) => {
         if (panelType === 'queue') {
-            if (shared) return <RoomQueue />;
+            if (shared) return <RoomQueuePanel />;
             return (
                 <Stack gap={0} h="100%" w="100%">
                     <PlayQueueListControls
@@ -144,6 +144,7 @@ export const SidebarPlayQueue = () => {
                         tableRef={tableRef}
                         type={ItemListKey.SIDE_QUEUE}
                     />
+                    <RoomQueueBanner />
                     <div className={styles.playQueueSection}>
                         <PlayQueue
                             listKey={ItemListKey.SIDE_QUEUE}
@@ -260,7 +261,7 @@ export const SidebarPlayQueue = () => {
             ) : (
                 showQueue &&
                 (shared ? (
-                    <RoomQueue />
+                    <RoomQueuePanel />
                 ) : (
                     <Stack className={styles.queueOnly} gap={0} w="100%">
                         <PlayQueueListControls
@@ -269,6 +270,7 @@ export const SidebarPlayQueue = () => {
                             tableRef={tableRef}
                             type={ItemListKey.SIDE_QUEUE}
                         />
+                        <RoomQueueBanner />
                         <Flex className={styles.queueOnlyContent} direction="column">
                             <div className={styles.playQueueSection}>
                                 <PlayQueue

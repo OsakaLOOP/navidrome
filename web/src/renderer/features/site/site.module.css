@@ -26,6 +26,228 @@
     height: 100%;
     padding: clamp(16px, 4vw, 36px);
     overflow: auto;
+    container-type: inline-size;
+}
+
+.surface {
+    min-width: 0;
+    padding: clamp(0.875rem, 2vw, 1.5rem);
+    background: alpha(var(--theme-colors-surface), 0.75);
+    border: 1px solid var(--theme-colors-border);
+    border-radius: var(--theme-radius-lg);
+
+    summary {
+        font-weight: 600;
+        cursor: pointer;
+    }
+}
+
+.community-columns,
+.square-columns,
+.profile-settings {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+@container (width >= 46rem) {
+    .community-columns,
+    .profile-settings {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    }
+
+    .square-columns {
+        grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    }
+}
+
+.section-title {
+    display: inline-flex;
+    gap: 0.5rem;
+    align-items: center;
+    vertical-align: middle;
+}
+
+.empty-state {
+    padding-block: 0.75rem;
+    border-top: 1px solid var(--theme-colors-border);
+}
+
+.directory-group + .directory-group {
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--theme-colors-border);
+}
+
+.settings-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+    gap: 0.875rem;
+}
+
+.settings-group {
+    padding-top: 0.875rem;
+    border-top: 1px solid var(--theme-colors-border);
+
+    > form {
+        max-width: 34rem;
+        margin-top: 0.75rem;
+    }
+}
+
+.large-avatar.large-avatar {
+    width: 3.625rem;
+    font-size: 1.35rem;
+}
+
+.min-width {
+    min-width: 0;
+}
+
+.wrap-text,
+.bio {
+    overflow-wrap: anywhere;
+}
+
+.bio {
+    white-space: pre-wrap;
+}
+
+.activity-filter {
+    flex: 0 1 12rem;
+    min-width: 0;
+}
+
+.timeline,
+.history-list,
+.download-list {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+
+.timeline-date {
+    padding-block: 0.625rem 0.375rem;
+    color: var(--theme-colors-foreground-muted);
+}
+
+.timeline-entry {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: clamp(0.5rem, 1.5vw, 0.875rem);
+    align-items: start;
+    padding-block: 0.75rem;
+    border-top: 1px solid var(--theme-colors-border);
+}
+
+.timeline-comment-group {
+    padding-block: 0.75rem;
+    border-top: 1px solid var(--theme-colors-border);
+}
+
+.timeline-comments {
+    padding-inline-start: clamp(0.5rem, 2vw, 1rem);
+    margin-inline-start: 0.25rem;
+    border-inline-start: 1px solid var(--theme-colors-border);
+
+    > .timeline-entry:first-child {
+        border-top: 0;
+    }
+}
+
+.timeline-body,
+.media-link {
+    min-width: 0;
+    padding: 0.625rem 0.75rem;
+    overflow-wrap: anywhere;
+    background: var(--theme-colors-background);
+    border: 1px solid var(--theme-colors-border);
+    border-radius: var(--theme-radius-md);
+}
+
+.timeline-body {
+    white-space: pre-wrap;
+}
+
+.timeline-cover {
+    width: 2.5rem;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: var(--theme-radius-sm);
+}
+
+.media-link {
+    display: flex;
+    gap: 0.625rem;
+    align-items: center;
+
+    > svg {
+        flex-shrink: 0;
+    }
+
+    small {
+        display: block;
+        color: var(--theme-colors-foreground-muted);
+    }
+
+    &:hover {
+        border-color: var(--theme-colors-primary);
+    }
+}
+
+.history-list > li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 0.75rem;
+    align-items: center;
+    padding-block: 0.625rem;
+    border-top: 1px solid var(--theme-colors-border);
+
+    > :nth-child(2) {
+        grid-row: 2;
+    }
+
+    time {
+        grid-row: 1 / span 2;
+        grid-column: 2;
+        max-width: 9rem;
+        text-align: end;
+    }
+}
+
+.download-overview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+    gap: 0.875rem;
+    align-items: end;
+}
+
+.download-entry {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.875rem;
+    align-items: start;
+    padding-block: 0.875rem;
+    border-top: 1px solid var(--theme-colors-border);
+}
+
+.download-cover {
+    display: grid;
+    place-items: center;
+    width: clamp(2.75rem, 8vw, 4rem);
+    aspect-ratio: 1;
+    overflow: hidden;
+    background: var(--theme-colors-background);
+    border: 1px solid var(--theme-colors-border);
+    border-radius: var(--theme-radius-md);
+
+    img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
 }
 
 .row {

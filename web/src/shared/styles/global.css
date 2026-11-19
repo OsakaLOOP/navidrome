@@ -3,6 +3,31 @@
     outline: none;
 }
 
+:root {
+    --theme-cjk-font-family:
+        'Noto Sans SC', 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+        'Hiragino Sans GB', 'Droid Sans Fallback', 'WenQuanYi Micro Hei';
+    --theme-font-fallback: var(--theme-cjk-font-family), 'Noto Sans Hebrew', sans-serif;
+}
+
+:lang(ja) {
+    --theme-cjk-font-family: 'Noto Sans JP', 'Yu Gothic UI', 'Hiragino Sans', 'Meiryo';
+}
+
+:lang(zh-Hant),
+:lang(zh-TW),
+:lang(zh-HK),
+:lang(zh-MO) {
+    --theme-cjk-font-family:
+        'Noto Sans TC', 'Noto Sans CJK TC', 'Microsoft JhengHei UI', 'Microsoft JhengHei',
+        'PingFang TC';
+}
+
+:lang(ko) {
+    --theme-cjk-font-family:
+        'Noto Sans KR', 'Noto Sans CJK KR', 'Malgun Gothic', 'Apple SD Gothic Neo';
+}
+
 *,
 *::before,
 *::after {
@@ -25,7 +50,7 @@ html {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family: var(--theme-content-font-family);
+    font-family: var(--theme-content-font-family, var(--theme-font-fallback));
     font-size: var(--theme-root-font-size);
     font-variant-numeric: tabular-nums;
     color: var(--theme-colors-foreground);
@@ -124,7 +149,6 @@ button {
     src: url('../../../assets/fonts/Symbola.woff2');
     font-display: swap;
 }
-
 
 @font-face {
     font-family: Inter;

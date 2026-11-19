@@ -32,7 +32,7 @@ import { ServerFeature } from '/@/shared/types/features-types';
 
 interface CreatePlaylistFormProps {
     onCancel: () => void;
-    songs?: Song[];
+    songs?: Pick<Song, 'id'>[];
 }
 
 export const CreatePlaylistForm = ({ onCancel, songs }: CreatePlaylistFormProps) => {
@@ -245,7 +245,7 @@ export const openCreatePlaylistModal = (
 
 export const openCreatePrefilledPlaylistModal = (
     server?: ServerListItem,
-    songs?: Song[],
+    songs?: Pick<Song, 'id'>[],
     e?: MouseEvent<HTMLButtonElement>,
 ) => {
     e?.stopPropagation();

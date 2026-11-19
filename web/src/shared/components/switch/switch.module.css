@@ -3,11 +3,12 @@
 }
 
 .track {
-    background-color: var(--theme-colors-surface);
-    border: 1px solid var(--theme-colors-border);
+    background-color: color-mix(in srgb, var(--theme-colors-foreground) 26%, var(--theme-colors-surface));
+    border: 1px solid color-mix(in srgb, var(--theme-colors-foreground) 44%, var(--theme-colors-surface));
 
     input:checked + & {
         background-color: var(--theme-colors-primary-filled);
+        border-color: var(--theme-colors-primary-filled);
 
         & > .thumb {
             background: var(--theme-colors-primary-contrast);

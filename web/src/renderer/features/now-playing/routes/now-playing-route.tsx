@@ -5,7 +5,7 @@ import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queu
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
 import { AnimatedPage } from '/@/renderer/features/shared/components/animated-page';
 import { PageErrorBoundary } from '/@/renderer/features/shared/components/page-error-boundary';
-import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
+import { RoomQueueBanner, RoomQueuePanel, useRoomActive } from '/@/renderer/features/site/room';
 import { ItemListKey } from '/@/shared/types/types';
 
 const NowPlayingRoute = () => {
@@ -16,7 +16,7 @@ const NowPlayingRoute = () => {
     if (shared)
         return (
             <AnimatedPage>
-                <RoomQueue />
+                <RoomQueuePanel />
             </AnimatedPage>
         );
 
@@ -28,6 +28,7 @@ const NowPlayingRoute = () => {
                 tableRef={tableRef}
                 type={ItemListKey.QUEUE_SONG}
             />
+            <RoomQueueBanner />
             <PlayQueue listKey={ItemListKey.QUEUE_SONG} ref={tableRef} searchTerm={search} />
         </AnimatedPage>
     );

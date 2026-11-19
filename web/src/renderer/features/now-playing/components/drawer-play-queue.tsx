@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { ItemListHandle } from '/@/renderer/components/item-list/types';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { PlayQueueListControls } from '/@/renderer/features/now-playing/components/play-queue-list-controls';
-import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
+import { RoomQueueBanner, RoomQueuePanel, useRoomActive } from '/@/renderer/features/site/room';
 import { Flex } from '/@/shared/components/flex/flex';
 import { ItemListKey } from '/@/shared/types/types';
 
@@ -12,7 +12,13 @@ export const DrawerPlayQueue = () => {
     const [search, setSearch] = useState<string | undefined>(undefined);
     const shared = useRoomActive();
 
-    if (shared) return <RoomQueue />;
+    if (shared) {
+        return (
+            <Flex direction="column" h="100%">
+                <RoomQueuePanel />
+            </Flex>
+        );
+    }
 
     return (
         <Flex direction="column" h="100%">
@@ -28,6 +34,7 @@ export const DrawerPlayQueue = () => {
                     tableRef={queueRef}
                     type={ItemListKey.SIDE_QUEUE}
                 />
+                <RoomQueueBanner />
             </div>
             <Flex bg="var(--theme-colors-background)" h="100%" mb="0.6rem">
                 <PlayQueue listKey={ItemListKey.SIDE_QUEUE} ref={queueRef} searchTerm={search} />

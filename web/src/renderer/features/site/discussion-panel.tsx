@@ -1,5 +1,5 @@
 import { InfiniteData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 
@@ -8,6 +8,7 @@ import type { EntityKind } from './entity-panel';
 import { EmojiPicker, EmojiText, useDiscussionEmoji } from './discussion-emoji';
 import styles from './discussion-panel.module.css';
 import { isRoomActive, useRoomActive } from './room';
+import { MemberAvatar } from './room-members';
 import { siteApi } from './site-api';
 
 import { api } from '/@/renderer/api';
@@ -28,8 +29,11 @@ import { Text } from '/@/shared/components/text/text';
 import { Textarea } from '/@/shared/components/textarea/textarea';
 
 type Comment = Quote & {
+    avatarVersion: number;
     canDelete: boolean;
     createdAt: string;
+    depth: number;
+    floor: number;
     hasReplies: boolean;
     liked: boolean;
     likes: number;
@@ -48,18 +52,54 @@ type Discussion = {
 type Props = {
     actions?: ReactNode;
     children?: ReactNode;
+    commentId?: number;
+    composerOnly?: boolean;
     id: string;
-    kind: EntityKind;
+    kind: EntityKind | 'thought';
     player?: boolean;
 };
 type Quote = { body: string; deleted: boolean; id: number; name: string };
 const limit = 4000;
 
+function useDiscussionThread(path: string, key: unknown[], root?: number) {
+    return useInfiniteQuery({
+        enabled: Boolean(root),
+        getNextPageParam: (last: Discussion) => last.next ?? undefined,
+        initialPageParam: 0,
+        queryFn: ({ pageParam }): Promise<Discussion> =>
+            siteApi.request(`${path}?thread=${root}&offset=${pageParam}`),
+        queryKey: [...key, 'thread', root],
+    });
+}
+
+function InlineThread({
+    baseKey,
+    loaded,
+    path,
+    render,
+    root,
+}: {
+    baseKey: unknown[];
+    loaded: () => void;
+    path: string;
+    render: (root: number, thread: ReturnType<typeof useDiscussionThread>) => ReactNode;
+    root: number;
+}) {
+    const thread = useDiscussionThread(path, baseKey, root);
+    useEffect(() => {
+        if (thread.data) loaded();
+    }, [loaded, thread.data]);
+    return render(root, thread);
+}
+
 export function DiscussionPanel(props: Props) {
     const server = useAuthStore((state) => state.currentServer);
     if (window.SERVER_NAME !== 'ndFork' || !server) return null;
     return (
-        <Discussion key={`${server.id}:${server.userId}:${props.kind}:${props.id}`} {...props} />
+        <Discussion
+            key={`${server.id}:${server.userId}:${props.kind}:${props.id}:${props.commentId ?? ''}`}
+            {...props}
+        />
     );
 }
 
@@ -77,7 +117,7 @@ export function useDiscussionCount(songId?: string) {
     return query.data?.count;
 }
 
-function Discussion({ actions, children, id, kind, player }: Props) {
+function Discussion({ actions, children, commentId, composerOnly, id, kind, player }: Props) {
     const { i18n, t } = useTranslation();
     const server = useAuthStore((state) => state.currentServer);
     const client = useQueryClient();
@@ -96,7 +136,6 @@ function Discussion({ actions, children, id, kind, player }: Props) {
     const [reason, setReason] = useState('');
     const [deleting, setDeleting] = useState<Comment | null>(null);
     const [anchor, setAnchor] = useState<null | { comment: Comment; root: number }>(null);
-    const [expanded, setExpanded] = useState<number>();
     const [ordering, setOrdering] = useState<'hot' | 'latest' | 'timed'>('latest');
     const [highlight, setHighlight] = useState<number>();
     const [busy, setBusy] = useState<string>();
@@ -112,6 +151,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
     const path = `/site/discussion/${kind}/${encodeURIComponent(id)}`;
     const key = ['site', 'discussion', server?.id, server?.userId, kind, id];
     const query = useInfiniteQuery({
+        enabled: !composerOnly && !commentId,
         getNextPageParam: (last: Discussion) => last.next ?? undefined,
         initialPageParam: 0,
         queryFn: ({ pageParam }): Promise<Discussion> =>
@@ -128,22 +168,19 @@ function Discussion({ actions, children, id, kind, player }: Props) {
         ).values(),
     ];
     const first = query.data?.pages[0];
-    const threadId = anchor?.root ?? expanded;
-    const thread = useInfiniteQuery({
-        enabled: Boolean(threadId),
-        getNextPageParam: (last: Discussion) => last.next ?? undefined,
-        initialPageParam: 0,
-        queryFn: ({ pageParam }): Promise<Discussion> =>
-            siteApi.request(`${path}?thread=${threadId}&offset=${pageParam}`),
-        queryKey: [...key, 'thread', threadId],
+    const selected = useQuery({
+        enabled: Boolean(commentId),
+        queryFn: (): Promise<Discussion> => siteApi.request(`${path}?comment=${commentId}`),
+        queryKey: [...key, 'selected', commentId],
     });
-    const root = useInfiniteQuery({
-        enabled: Boolean(anchor?.root),
-        getNextPageParam: () => undefined,
-        initialPageParam: 0,
-        queryFn: (): Promise<Discussion> => siteApi.request(`${path}?comment=${anchor?.root}`),
-        queryKey: [...key, 'root', anchor?.root],
+    const rootId = selected.data?.root ?? anchor?.root;
+    const thread = useDiscussionThread(path, key, rootId);
+    const root = useQuery({
+        enabled: Boolean(rootId) && rootId !== commentId,
+        queryFn: (): Promise<Discussion> => siteApi.request(`${path}?comment=${rootId}`),
+        queryKey: [...key, 'root', rootId],
     });
+    const rootComment = rootId === commentId ? selected.data?.comments[0] : root.data?.comments[0];
     const people = useInfiniteQuery({
         enabled: showPeople,
         getNextPageParam: (last: {
@@ -175,14 +212,17 @@ function Discussion({ actions, children, id, kind, player }: Props) {
         const timer = window.setTimeout(() => setHighlight(undefined), 2500);
         return () => window.clearTimeout(timer);
     }, [highlight]);
-    useEffect(() => {
+    const scrollToPublished = useCallback(() => {
         if (published === undefined) return;
         const element = items.current.get(published);
         if (!element) return;
         element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         setHighlight(published);
         setPublished(undefined);
-    }, [published, query.data, thread.data]);
+    }, [published]);
+    useEffect(() => {
+        if (query.data || thread.data) scrollToPublished();
+    }, [query.data, scrollToPublished, thread.data]);
 
     const act = async (operation: string, run: () => Promise<unknown>, done?: () => void) => {
         if (operations.current.has(operation)) return;
@@ -204,31 +244,26 @@ function Discussion({ actions, children, id, kind, player }: Props) {
         }
     };
     const refresh = () => {
+        void client.invalidateQueries({ queryKey: ['site', 'timeline'] });
         void client.invalidateQueries({
             queryKey: ['site', 'discussion-count', server?.id, server?.userId, id],
         });
         return client.invalidateQueries({ queryKey: key });
     };
     const patchLike = (comment: Comment, liked: boolean, count: number) => {
-        client.setQueriesData<InfiniteData<Discussion>>(
-            { queryKey: key },
-            (data) =>
-                data && {
-                    ...data,
-                    pages: data.pages.map((page) =>
-                        !page.comments
-                            ? page
-                            : {
-                                  ...page,
-                                  comments: page.comments.map((item) =>
-                                      item.id === comment.id
-                                          ? { ...item, liked, likes: count }
-                                          : item,
-                                  ),
-                              },
-                    ),
-                },
-        );
+        const patchPage = (page: Discussion) => ({
+            ...page,
+            comments: page.comments.map((item) =>
+                item.id === comment.id ? { ...item, liked, likes: count } : item,
+            ),
+        });
+        client.setQueriesData<Discussion | InfiniteData<Discussion>>({ queryKey: key }, (data) => {
+            if (!data) return data;
+            if ('pages' in data) {
+                return { ...data, pages: data.pages.map((page) => ('comments' in page ? patchPage(page) : page)) };
+            }
+            return patchPage(data);
+        });
         setAnchor((current) =>
             current?.comment.id === comment.id
                 ? { ...current, comment: { ...current.comment, liked, likes: count } }
@@ -247,6 +282,7 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                 'PUT',
             );
             patchLike(comment, result.liked, result.likes);
+            void client.invalidateQueries({ queryKey: ['site', 'timeline'] });
         } catch (error) {
             patchLike(comment, comment.liked, comment.likes);
             setNotice({ error: true, text: (error as Error).message });
@@ -265,18 +301,26 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     setPublished(editing.id);
                     return;
                 }
+                const parentId = reply?.id ?? (commentId ? rootId : undefined);
                 const posted = await siteApi.request<{ id: number }>(path, {
                     body,
-                    parentId: reply?.id,
+                    parentId,
                     position,
                 });
-                if (reply) {
+                if (parentId) {
                     const result = await siteApi
                         .request<Discussion>(`${path}?comment=${posted.id}`)
                         .catch(() => undefined);
                     if (result?.root && result.comments[0]) {
-                        if (items.current.has(result.root) && !thread.hasNextPage) {
-                            setExpanded(result.root);
+                        const loaded = client.getQueryData<InfiniteData<Discussion>>([
+                            ...key,
+                            'thread',
+                            result.root,
+                        ]);
+                        if (
+                            commentId ||
+                            (items.current.has(result.root) && !loaded?.pages.at(-1)?.next)
+                        ) {
                             setPublished(posted.id);
                         } else {
                             setAnchor({ comment: result.comments[0], root: result.root });
@@ -357,7 +401,10 @@ function Discussion({ actions, children, id, kind, player }: Props) {
         return (
             <article
                 className={styles.comment}
-                data-highlight={highlight === comment.id}
+                data-highlight={
+                    highlight === comment.id ||
+                    (inDialog ? anchor?.comment.id === comment.id : commentId === comment.id)
+                }
                 key={comment.id}
                 ref={
                     inDialog
@@ -369,13 +416,12 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                 }
                 tabIndex={-1}
             >
-                <span
-                    aria-hidden="true"
+                <MemberAvatar
                     className={styles.avatar}
-                    data-color={(comment.userId.charCodeAt(0) || 0) % 4}
-                >
-                    {Array.from(name)[0]?.toLocaleUpperCase()}
-                </span>
+                    id={comment.userId}
+                    name={name}
+                    version={comment.avatarVersion}
+                />
                 <div className={styles.content}>
                     <div className={styles.byline}>
                         {comment.userId ? (
@@ -388,6 +434,9 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                         ) : (
                             <span className={styles.author}>{name}</span>
                         )}
+                        <Text className={styles.floor} component="span" size="xs">
+                            {t('site.community.floor', { count: comment.floor })}
+                        </Text>
                         <time
                             dateTime={comment.createdAt}
                             title={
@@ -531,196 +580,260 @@ function Discussion({ actions, children, id, kind, player }: Props) {
         );
     };
     const modalHandlers = (close: () => void) => ({ close, open: () => undefined, toggle: close });
-    const threadItems = thread.data?.pages.flatMap((page) => page.comments) ?? [];
-    const renderThread = (dialog = false) => (
-        <Stack className={styles.thread} gap="xs">
-            {thread.isPending && <Skeleton height={42} />}
-            {thread.isError && (
-                <Button onClick={() => void thread.refetch()}>{t('discussion.retry')}</Button>
-            )}
-            {threadItems
-                .filter((comment) => !dialog || comment.id !== anchor?.comment.id)
-                .map((comment) => renderCard(comment, dialog))}
-            {thread.hasNextPage && (
-                <Button
-                    loading={thread.isFetchingNextPage}
-                    onClick={() => void thread.fetchNextPage()}
-                    size="compact-sm"
-                    variant="subtle"
-                >
-                    {t('site.more')}
-                </Button>
-            )}
-        </Stack>
-    );
+    const selectedComment = selected.data?.comments[0];
+    const outsideLoadedBranch = (comment: Comment) =>
+        comment.id !== rootId &&
+        !thread.data?.pages.some((page) => page.comments.some((item) => item.id === comment.id));
+    const renderThread = (root: number, branch: typeof thread, dialog = false) => {
+        const replies = new Map<number, Comment[]>();
+        for (const comment of branch.data?.pages.flatMap((page) => page.comments) ?? []) {
+            if (!comment.parent) continue;
+            const siblings = replies.get(comment.parent.id) ?? [];
+            siblings.push(comment);
+            replies.set(comment.parent.id, siblings);
+        }
+        const renderBranch = (parent: number): ReactNode => {
+            const children = replies.get(parent);
+            if (!children?.length) return null;
+            return (
+                <ol className={styles.branch} data-indent={children[0].depth <= 3}>
+                    {children.map((comment) => (
+                        <li className={styles.branchItem} key={comment.id}>
+                            {renderCard(comment, dialog)}
+                            {renderBranch(comment.id)}
+                        </li>
+                    ))}
+                </ol>
+            );
+        };
+        return (
+            <Stack className={styles.thread} gap="xs">
+                {branch.isPending && <Skeleton height={42} />}
+                {branch.isError && !branch.data && (
+                    <Button onClick={() => void branch.refetch()}>{t('discussion.retry')}</Button>
+                )}
+                {renderBranch(root)}
+                {branch.hasNextPage && (
+                    <Button
+                        loading={branch.isFetchingNextPage}
+                        onClick={() => void branch.fetchNextPage()}
+                        size="compact-sm"
+                        variant="subtle"
+                    >
+                        {t(branch.isFetchNextPageError ? 'discussion.retryMore' : 'site.more')}
+                    </Button>
+                )}
+            </Stack>
+        );
+    };
     return (
         <section
             aria-labelledby={heading}
-            className={`${styles.discussion}${player ? ` ${styles.inPlayer}` : ''}`}
+            className={`${styles.discussion}${player ? ` ${styles.inPlayer}` : ''}${composerOnly ? ` ${styles.composerOnly}` : ''}`}
         >
             <header className={styles.header}>
                 <Group gap="sm">
+                    <Icon icon={composerOnly ? 'edit' : 'discussion'} size="sm" />
                     <Text component="h2" fw={700} id={heading} size="xl">
-                        {t('site.discussion')}
+                        {t(
+                            composerOnly
+                                ? 'site.community.writeThought'
+                                : kind === 'thought'
+                                  ? 'site.community.thoughtThread'
+                                  : 'site.discussion',
+                        )}
                     </Text>
-                    {first && <span className={styles.count}>{first.commentCount ?? 0}</span>}
+                    {first?.commentCount !== undefined && (
+                        <span className={styles.count}>{first.commentCount}</span>
+                    )}
                 </Group>
                 {actions}
             </header>
             {children}
-            <form
-                className={styles.composer}
-                onSubmit={(event) => {
-                    event.preventDefault();
-                    publish();
-                }}
-            >
-                <span aria-hidden="true" className={styles.avatar}>
-                    {Array.from(server?.username ?? '?')[0]?.toLocaleUpperCase()}
-                </span>
-                <Stack className={styles.content} gap="xs">
-                    {editing && (
-                        <Group gap="xs">
-                            <Text size="sm">{t('common.edit')}</Text>
-                            <ActionIcon
-                                aria-label={t('site.cancel')}
-                                icon="x"
-                                onClick={() => {
-                                    setEditing(null);
-                                    setBody('');
-                                }}
-                                variant="subtle"
-                            />
-                        </Group>
-                    )}
-                    {reply && (
-                        <Group justify="space-between" wrap="nowrap">
-                            <Text size="sm" truncate>
-                                {t('site.replyTo', {
-                                    name: reply.name || t('discussion.formerUser'),
-                                })}
-                            </Text>
-                            <ActionIcon
-                                aria-label={t('site.cancel')}
-                                icon="x"
-                                onClick={() => setReply(null)}
-                                variant="subtle"
-                            />
-                        </Group>
-                    )}
-                    <div className={styles.editorHeader}>
-                        <Group gap="md">
-                            <button
-                                aria-pressed={!preview}
-                                className={styles.editorMode}
-                                onClick={() => setPreview(false)}
-                                type="button"
-                            >
-                                {t('discussion.write')}
-                            </button>
-                            <button
-                                aria-pressed={preview}
-                                className={styles.editorMode}
-                                onClick={() => setPreview(true)}
-                                type="button"
-                            >
-                                {t('common.preview')}
-                            </button>
-                        </Group>
-                        <EmojiPicker
-                            disabled={busy === 'post'}
-                            emoji={emoji}
-                            onSelect={insertEmoji}
-                        />
-                    </div>
-                    <div hidden={preview}>
-                        <Textarea
-                            aria-label={t('site.writeComment')}
-                            autosize
-                            maxRows={7}
-                            minRows={2}
-                            onChange={(event) => setBody(event.currentTarget.value)}
-                            onKeyDown={(event) => {
-                                if (
-                                    event.key === 'Enter' &&
-                                    (event.ctrlKey || event.metaKey) &&
-                                    !event.nativeEvent.isComposing
-                                ) {
-                                    event.preventDefault();
-                                    publish();
-                                }
-                            }}
-                            placeholder={t('site.writeComment')}
-                            ref={input}
-                            value={body}
-                        />
-                    </div>
-                    {(preview || body.includes('(')) && (
-                        <div className={styles.preview}>
-                            {body.trim() ? (
-                                <EmojiText index={emojiIndex} text={body} />
-                            ) : (
-                                <Text c="dimmed" size="sm">
-                                    {t('discussion.emptyPreview')}
-                                </Text>
-                            )}
-                        </div>
-                    )}
-                    {(composerError || length > limit) && (
-                        <Text c="red" role="alert" size="xs">
-                            {composerError || t('discussion.tooLong')}
+            {commentId && (
+                <Stack gap="xs">
+                    {selected.isPending && <Skeleton height={60} />}
+                    {(selected.isError || root.isError) && (
+                        <Text c="dimmed" role="status">
+                            {t('discussion.quoteUnavailable')}
                         </Text>
                     )}
-                    <div className={styles.composeActions}>
-                        <Group gap="xs">
-                            {!editing && (canAttach || position != null) && (
-                                <Checkbox
-                                    checked={position != null}
-                                    label={
-                                        position != null
-                                            ? playbackTime(position)
-                                            : t('site.attachTime')
-                                    }
-                                    onChange={(event) =>
-                                        setPosition(
-                                            event.currentTarget.checked
-                                                ? useTimestampStoreBase.getState().timestamp
-                                                : undefined,
-                                        )
-                                    }
-                                    size="xs"
-                                />
-                            )}
-                            {!editing && canAttach && position != null && (
-                                <Button
-                                    onClick={() =>
-                                        setPosition(useTimestampStoreBase.getState().timestamp)
-                                    }
-                                    size="compact-xs"
-                                    variant="subtle"
-                                >
-                                    {t('discussion.captureTime')}
-                                </Button>
-                            )}
-                        </Group>
-                        <Group gap="sm" wrap="nowrap">
-                            {length > 0 && (
-                                <Text c={length > limit ? 'red' : 'dimmed'} size="xs">
-                                    {length}/{limit}
-                                </Text>
-                            )}
-                            <Button
-                                disabled={Boolean(busy) || !body.trim() || length > limit}
-                                loading={busy === 'post'}
-                                size="compact-sm"
-                                type="submit"
-                            >
-                                {t(editing ? 'common.save' : reply ? 'site.reply' : 'site.publish')}
-                            </Button>
-                        </Group>
-                    </div>
+                    {rootComment && (
+                        <>
+                            {renderCard(rootComment)}
+                            {selectedComment &&
+                                outsideLoadedBranch(selectedComment) &&
+                                renderCard(selectedComment)}
+                            {rootId && renderThread(rootId, thread)}
+                        </>
+                    )}
                 </Stack>
-            </form>
+            )}
+            {(!commentId || rootComment) && (
+                <form
+                    className={styles.composer}
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        publish();
+                    }}
+                >
+                    <span aria-hidden="true" className={styles.avatar}>
+                        {Array.from(server?.username ?? '?')[0]?.toLocaleUpperCase()}
+                    </span>
+                    <Stack className={styles.content} gap="xs">
+                        {editing && (
+                            <Group gap="xs">
+                                <Text size="sm">{t('common.edit')}</Text>
+                                <ActionIcon
+                                    aria-label={t('site.cancel')}
+                                    icon="x"
+                                    onClick={() => {
+                                        setEditing(null);
+                                        setBody('');
+                                    }}
+                                    variant="subtle"
+                                />
+                            </Group>
+                        )}
+                        {reply && (
+                            <Group justify="space-between" wrap="nowrap">
+                                <Text size="sm" truncate>
+                                    {t('site.replyTo', {
+                                        name: reply.name || t('discussion.formerUser'),
+                                    })}
+                                </Text>
+                                <ActionIcon
+                                    aria-label={t('site.cancel')}
+                                    icon="x"
+                                    onClick={() => setReply(null)}
+                                    variant="subtle"
+                                />
+                            </Group>
+                        )}
+                        <div className={styles.editorHeader}>
+                            <Group gap="md">
+                                <button
+                                    aria-pressed={!preview}
+                                    className={styles.editorMode}
+                                    onClick={() => setPreview(false)}
+                                    type="button"
+                                >
+                                    {t('discussion.write')}
+                                </button>
+                                <button
+                                    aria-pressed={preview}
+                                    className={styles.editorMode}
+                                    onClick={() => setPreview(true)}
+                                    type="button"
+                                >
+                                    {t('common.preview')}
+                                </button>
+                            </Group>
+                            <EmojiPicker
+                                disabled={busy === 'post'}
+                                emoji={emoji}
+                                onSelect={insertEmoji}
+                            />
+                        </div>
+                        <div hidden={preview}>
+                            <Textarea
+                                aria-label={t('site.writeComment')}
+                                autosize
+                                maxRows={7}
+                                minRows={2}
+                                onChange={(event) => setBody(event.currentTarget.value)}
+                                onKeyDown={(event) => {
+                                    if (
+                                        event.key === 'Enter' &&
+                                        (event.ctrlKey || event.metaKey) &&
+                                        !event.nativeEvent.isComposing
+                                    ) {
+                                        event.preventDefault();
+                                        publish();
+                                    }
+                                }}
+                                placeholder={t(
+                                    composerOnly
+                                        ? 'site.community.thoughtPlaceholder'
+                                        : 'site.writeComment',
+                                )}
+                                ref={input}
+                                value={body}
+                            />
+                        </div>
+                        {(preview || body.includes('(')) && (
+                            <div className={styles.preview}>
+                                {body.trim() ? (
+                                    <EmojiText index={emojiIndex} text={body} />
+                                ) : (
+                                    <Text c="dimmed" size="sm">
+                                        {t('discussion.emptyPreview')}
+                                    </Text>
+                                )}
+                            </div>
+                        )}
+                        {(composerError || length > limit) && (
+                            <Text c="red" role="alert" size="xs">
+                                {composerError || t('discussion.tooLong')}
+                            </Text>
+                        )}
+                        <div className={styles.composeActions}>
+                            <Group gap="xs">
+                                {!editing && (canAttach || position != null) && (
+                                    <Checkbox
+                                        checked={position != null}
+                                        label={
+                                            position != null
+                                                ? playbackTime(position)
+                                                : t('site.attachTime')
+                                        }
+                                        onChange={(event) =>
+                                            setPosition(
+                                                event.currentTarget.checked
+                                                    ? useTimestampStoreBase.getState().timestamp
+                                                    : undefined,
+                                            )
+                                        }
+                                        size="xs"
+                                    />
+                                )}
+                                {!editing && canAttach && position != null && (
+                                    <Button
+                                        onClick={() =>
+                                            setPosition(useTimestampStoreBase.getState().timestamp)
+                                        }
+                                        size="compact-xs"
+                                        variant="subtle"
+                                    >
+                                        {t('discussion.captureTime')}
+                                    </Button>
+                                )}
+                            </Group>
+                            <Group gap="sm" wrap="nowrap">
+                                {length > 0 && (
+                                    <Text c={length > limit ? 'red' : 'dimmed'} size="xs">
+                                        {length}/{limit}
+                                    </Text>
+                                )}
+                                <Button
+                                    disabled={Boolean(busy) || !body.trim() || length > limit}
+                                    loading={busy === 'post'}
+                                    size="compact-sm"
+                                    type="submit"
+                                >
+                                    {t(
+                                        editing
+                                            ? 'common.save'
+                                            : reply
+                                              ? 'site.reply'
+                                              : 'site.publish',
+                                    )}
+                                </Button>
+                            </Group>
+                        </div>
+                    </Stack>
+                </form>
+            )}
             {notice && (
                 <Text
                     c={notice.error ? 'red' : 'dimmed'}
@@ -730,92 +843,93 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     {notice.text}
                 </Text>
             )}
-            <div className={styles.listHeader}>
-                <Group gap={4}>
-                    {(kind === 'song'
-                        ? (['latest', 'hot', 'timed'] as const)
-                        : (['latest', 'hot'] as const)
-                    ).map((item) => (
-                        <Button
-                            aria-pressed={ordering === item}
-                            key={item}
-                            onClick={() => {
-                                setOrdering(item);
-                                setExpanded(undefined);
-                            }}
-                            size="compact-sm"
-                            variant={ordering === item ? 'light' : 'subtle'}
-                        >
-                            {t(`discussion.${item}`)}
-                        </Button>
+            {!composerOnly && !commentId && (
+                <>
+                    <div className={styles.listHeader}>
+                        <Group gap={4}>
+                            {(kind === 'song'
+                                ? (['latest', 'hot', 'timed'] as const)
+                                : (['latest', 'hot'] as const)
+                            ).map((item) => (
+                                <Button
+                                    aria-pressed={ordering === item}
+                                    key={item}
+                                    onClick={() => setOrdering(item)}
+                                    size="compact-sm"
+                                    variant={ordering === item ? 'light' : 'subtle'}
+                                >
+                                    {t(`discussion.${item}`)}
+                                </Button>
+                            ))}
+                        </Group>
+                        {!player && Boolean(first?.favoriteCount) && (
+                            <Button
+                                disabled={!first?.publicCount}
+                                leftSection={<Icon icon="favorite" size="xs" />}
+                                onClick={() => setShowPeople(true)}
+                                size="compact-xs"
+                                variant="subtle"
+                            >
+                                {t('site.favoriteCount', { count: first?.favoriteCount })}
+                            </Button>
+                        )}
+                    </div>
+                    {query.isPending && (
+                        <Stack aria-label={t('discussion.loading')} gap="md" role="status">
+                            <Skeleton height={48} />
+                            <Skeleton height={48} />
+                        </Stack>
+                    )}
+                    {query.isError && !first && (
+                        <Stack align="center" className={styles.empty} gap="xs">
+                            <Text role="alert" size="sm">
+                                {t('discussion.loadFailed')}
+                            </Text>
+                            <Button
+                                onClick={() => void query.refetch()}
+                                size="compact-sm"
+                                variant="light"
+                            >
+                                {t('discussion.retry')}
+                            </Button>
+                        </Stack>
+                    )}
+                    {first && !comments.length && (
+                        <Stack align="center" className={styles.empty} gap={4}>
+                            <Icon icon="discussion" size="lg" />
+                            <Text fw={600} size="sm">
+                                {t('discussion.empty')}
+                            </Text>
+                            <Text c="dimmed" size="sm">
+                                {t('discussion.emptyHint')}
+                            </Text>
+                        </Stack>
+                    )}
+                    {comments.map((comment) => (
+                        <div className={styles.discussionEntry} key={comment.id}>
+                            {renderCard(comment)}
+                            {comment.hasReplies && (
+                                <InlineThread
+                                    baseKey={key}
+                                    loaded={scrollToPublished}
+                                    path={path}
+                                    render={renderThread}
+                                    root={comment.id}
+                                />
+                            )}
+                        </div>
                     ))}
-                </Group>
-                {!player && Boolean(first?.favoriteCount) && (
-                    <Button
-                        disabled={!first?.publicCount}
-                        leftSection={<Icon icon="favorite" size="xs" />}
-                        onClick={() => setShowPeople(true)}
-                        size="compact-xs"
-                        variant="subtle"
-                    >
-                        {t('site.favoriteCount', { count: first?.favoriteCount })}
-                    </Button>
-                )}
-            </div>
-            {query.isPending && (
-                <Stack aria-label={t('discussion.loading')} gap="md" role="status">
-                    <Skeleton height={48} />
-                    <Skeleton height={48} />
-                </Stack>
-            )}
-            {query.isError && !first && (
-                <Stack align="center" className={styles.empty} gap="xs">
-                    <Text role="alert" size="sm">
-                        {t('discussion.loadFailed')}
-                    </Text>
-                    <Button onClick={() => void query.refetch()} size="compact-sm" variant="light">
-                        {t('discussion.retry')}
-                    </Button>
-                </Stack>
-            )}
-            {first && !comments.length && (
-                <Stack align="center" className={styles.empty} gap={4}>
-                    <Icon icon="discussion" size="lg" />
-                    <Text fw={600} size="sm">
-                        {t('discussion.empty')}
-                    </Text>
-                    <Text c="dimmed" size="sm">
-                        {t('discussion.emptyHint')}
-                    </Text>
-                </Stack>
-            )}
-            {comments.map((comment) => (
-                <div key={comment.id}>
-                    {renderCard(comment)}
-                    {comment.hasReplies && ordering !== 'timed' && (
+                    {query.hasNextPage && (
                         <Button
-                            aria-expanded={expanded === comment.id}
-                            onClick={() =>
-                                setExpanded(expanded === comment.id ? undefined : comment.id)
-                            }
+                            loading={query.isFetchingNextPage}
+                            onClick={() => void query.fetchNextPage()}
                             size="compact-sm"
                             variant="subtle"
                         >
-                            {t('discussion.replies')}
+                            {t(query.isFetchNextPageError ? 'discussion.retryMore' : 'site.more')}
                         </Button>
                     )}
-                    {expanded === comment.id && !anchor && renderThread()}
-                </div>
-            ))}
-            {query.hasNextPage && (
-                <Button
-                    loading={query.isFetchingNextPage}
-                    onClick={() => void query.fetchNextPage()}
-                    size="compact-sm"
-                    variant="subtle"
-                >
-                    {t(query.isFetchNextPageError ? 'discussion.retryMore' : 'site.more')}
-                </Button>
+                </>
             )}
             {deleting && (
                 <Modal
@@ -862,11 +976,15 @@ function Discussion({ actions, children, id, kind, player }: Props) {
                     opened
                     title={t('discussion.original')}
                 >
-                    {root.data?.pages[0]?.comments[0] &&
-                        anchor.root !== anchor.comment.id &&
-                        renderCard(root.data.pages[0].comments[0], true)}
-                    {renderCard(anchor.comment, true)}
-                    {renderThread(true)}
+                    {rootComment ? (
+                        renderCard(rootComment, true)
+                    ) : root.isError ? (
+                        <Text c="dimmed">{t('discussion.quoteUnavailable')}</Text>
+                    ) : (
+                        <Skeleton height={48} />
+                    )}
+                    {outsideLoadedBranch(anchor.comment) && renderCard(anchor.comment, true)}
+                    {rootId && renderThread(rootId, thread, true)}
                 </Modal>
             )}
             {showPeople && (

@@ -1,5 +1,5 @@
 .root {
-    font-family: var(--font-family);
+    font-family: var(--font-family), var(--theme-font-fallback);
     color: var(--theme-colors-foreground);
     user-select: auto;
 }

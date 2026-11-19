@@ -6,6 +6,14 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { kuromojiDictionaryPlugin } from './vite.kuromoji-plugin';
 import { createReactPlugin } from './vite.react-plugin';
 
+const backendTarget = process.env.NAVIDROME_DEV_URL || 'http://127.0.0.1:4533';
+// Vite 7 默认启用 changeOrigin: true；此处显式关闭以保留原始 Host，满足后端 sameSiteWrite 同源校验。
+const backendProxy = (rewrite?: (url: string) => string) => ({
+    changeOrigin: false,
+    ...(rewrite ? { rewrite } : {}),
+    target: backendTarget,
+});
+
 export default defineConfig({
     base: './',
     build: {
@@ -173,4 +181,19 @@ export default defineConfig({
         },
     },
     root: path.resolve(__dirname, './src/renderer'),
+    server: {
+        host: '127.0.0.1',
+        port: 5173,
+        proxy: {
+            '/api': backendProxy(),
+            '^/app(?:/|$)': backendProxy(),
+            '/auth': backendProxy(),
+            '/media': backendProxy(),
+            '/rest': backendProxy(),
+            // 开发服务器从根路径提供 index.html，需将 settings.js 转发到后端 /music/settings.js。
+            '/settings.js': backendProxy(() => '/music/settings.js'),
+            '/share': backendProxy(),
+            '/site': backendProxy(),
+        },
+    },
 });

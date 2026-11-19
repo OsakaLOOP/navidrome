@@ -1,4 +1,5 @@
 import type { NotificationData } from '@mantine/notifications';
+import type { ReactNode } from 'react';
 
 import {
     cleanNotifications,
@@ -12,7 +13,7 @@ import clsx from 'clsx';
 import styles from './toast.module.css';
 
 interface NotificationProps extends Omit<NotificationData, 'message'> {
-    message?: string;
+    message?: ReactNode;
     onClose?: () => void;
     type?: 'error' | 'info' | 'success' | 'warning';
 }
@@ -24,7 +25,7 @@ const getTitle = (type: NotificationProps['type']) => {
     return 'Info';
 };
 
-const showToast = ({ message, onClose, type, ...props }: NotificationProps) => {
+const showToast = ({ message, onClose, title, type, ...props }: NotificationProps) => {
     return notifications.show({
         ...props,
         classNames: {
@@ -42,7 +43,7 @@ const showToast = ({ message, onClose, type, ...props }: NotificationProps) => {
         },
         message: message ?? '',
         onClose,
-        title: getTitle(type),
+        title: title ?? getTitle(type),
         withBorder: true,
         withCloseButton: true,
     });

@@ -227,7 +227,7 @@ export const MobilePlayerbar = () => {
                 </LayoutGroup>
             </div>
             <div className={styles.controlsWrapper}>
-                <RoomPlayerButton />
+                <RoomPlayerButton position="top" />
                 <PlayerButton
                     icon={<Icon fill="default" icon="mediaPrevious" size="md" />}
                     onClick={(e) => {

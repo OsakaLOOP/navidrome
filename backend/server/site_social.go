@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -15,9 +16,16 @@ import (
 	"github.com/navidrome/navidrome/model/request"
 )
 
+func (s *Server) discussionObject(ctx context.Context, kind, id string) (any, error) {
+	if kind == "thought" && id == "global" {
+		return nil, nil
+	}
+	return s.metadataObject(ctx, kind, id)
+}
+
 func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 	kind, itemID := chi.URLParam(r, "kind"), chi.URLParam(r, "id")
-	if _, err := s.metadataObject(r.Context(), kind, itemID); err != nil {
+	if _, err := s.discussionObject(r.Context(), kind, itemID); err != nil {
 		siteError(w, 404, "对象不可访问")
 		return
 	}
@@ -34,35 +42,46 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("sort") == "hot" && thread == 0 {
 		order = "likes DESC, c.id DESC"
 	} else if thread != 0 {
-		order = "c.id ASC"
+		order = "branch.path ASC"
 	}
-	rows, err := db.Db().QueryContext(r.Context(), `WITH RECURSIVE thread(id) AS (
-        SELECT id FROM site_comment WHERE id=? AND kind=? AND item_id=?
-        UNION ALL SELECT child.id FROM site_comment child JOIN thread ON child.parent_id=thread.id WHERE child.kind=? AND child.item_id=?
-        ) SELECT c.id,COALESCE(c.user_id,''),COALESCE(u.name,''),c.body,c.parent_id,c.position,c.deleted,c.created_at,
+	rows, err := db.Db().QueryContext(r.Context(), `WITH RECURSIVE branch(id,path,depth) AS (
+        SELECT id,printf('%020d',id),0 FROM site_comment WHERE id=? AND kind=? AND item_id=?
+        UNION ALL SELECT child.id,branch.path||'/'||printf('%020d',child.id),branch.depth+1
+          FROM site_comment child JOIN branch ON child.parent_id=branch.id WHERE child.kind=? AND child.item_id=?
+        ), timed(id,parent_id) AS (
+          SELECT id,parent_id FROM site_comment WHERE ? AND kind=? AND item_id=? AND position IS NOT NULL AND deleted=0
+          UNION SELECT p.id,p.parent_id FROM site_comment p JOIN timed t ON p.id=t.parent_id
+        ) SELECT c.id,COALESCE(c.user_id,''),COALESCE(NULLIF(profile.nickname,''),u.name,''),c.body,c.parent_id,c.position,c.deleted,c.created_at,
         CASE WHEN c.deleted=0 THEN (SELECT COUNT(*) FROM site_comment_like l WHERE l.comment_id=c.id) ELSE 0 END AS likes,
         c.deleted=0 AND EXISTS(SELECT 1 FROM site_comment_like l WHERE l.comment_id=c.id AND l.user_id=?),
-        COALESCE(pu.name,''),CASE WHEN p.deleted=0 THEN substr(p.body,1,160) ELSE '' END,COALESCE(p.deleted,1),
-        EXISTS(SELECT 1 FROM site_comment child WHERE child.parent_id=c.id AND (child.deleted=0 OR EXISTS(SELECT 1 FROM site_comment descendant WHERE descendant.parent_id=child.id)))
+        COALESCE(NULLIF(pp.nickname,''),pu.name,''),CASE WHEN p.deleted=0 THEN substr(p.body,1,160) ELSE '' END,COALESCE(p.deleted,1),
+        EXISTS(SELECT 1 FROM site_comment child WHERE child.parent_id=c.id AND (child.deleted=0 OR EXISTS(SELECT 1 FROM site_comment descendant WHERE descendant.parent_id=child.id))),
+        (SELECT COUNT(*) FROM site_comment previous WHERE previous.kind=c.kind AND previous.item_id=c.item_id AND previous.id<=c.id),
+        COALESCE(branch.depth,0),COALESCE(profile.avatar_version,0)
         FROM site_comment c LEFT JOIN user u ON u.id=c.user_id
+        LEFT JOIN site_profile profile ON profile.user_id=c.user_id
         LEFT JOIN site_comment p ON p.id=c.parent_id AND p.kind=c.kind AND p.item_id=c.item_id
         LEFT JOIN user pu ON pu.id=p.user_id
+        LEFT JOIN site_profile pp ON pp.user_id=pu.id
+        LEFT JOIN branch ON branch.id=c.id
         WHERE c.kind=? AND c.item_id=? AND (c.id=? OR (?=0 AND c.id<? AND
-            ((?=0 AND (c.parent_id IS NULL OR ?=1)) OR (c.id<>? AND c.id IN (SELECT id FROM thread))) AND (?=0 OR c.position IS NOT NULL)))
+            ((?=0 AND c.parent_id IS NULL AND (NOT ? OR c.id IN (SELECT id FROM timed))) OR branch.depth>0)))
           AND (c.deleted=0 OR EXISTS(SELECT 1 FROM site_comment child WHERE child.parent_id=c.id))
-        ORDER BY `+order+` LIMIT 31 OFFSET ?`, thread, kind, itemID, kind, itemID, u.ID, kind, itemID, anchor, anchor, before, thread, r.URL.Query().Has("timed"), thread, r.URL.Query().Has("timed"), offset)
+        ORDER BY `+order+` LIMIT 31 OFFSET ?`, thread, kind, itemID, kind, itemID, r.URL.Query().Has("timed"), kind, itemID,
+		u.ID, kind, itemID, anchor, anchor, before, thread, r.URL.Query().Has("timed"), offset)
 	if err != nil {
 		siteError(w, 500, "读取评论失败")
 		return
 	}
 	comments := []map[string]any{}
 	for rows.Next() {
-		var id, likes int
+		var id, likes, floor, depth int
+		var avatarVersion int64
 		var author, name, body, created, parentName, parentBody string
 		var parent sql.NullInt64
 		var position sql.NullFloat64
 		var deleted, liked, parentDeleted, replies bool
-		if rows.Scan(&id, &author, &name, &body, &parent, &position, &deleted, &created, &likes, &liked, &parentName, &parentBody, &parentDeleted, &replies) != nil {
+		if rows.Scan(&id, &author, &name, &body, &parent, &position, &deleted, &created, &likes, &liked, &parentName, &parentBody, &parentDeleted, &replies, &floor, &depth, &avatarVersion) != nil {
 			rows.Close()
 			siteError(w, 500, "读取评论失败")
 			return
@@ -81,7 +100,7 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		if parsed, err := time.Parse(time.DateTime, created); err == nil {
 			created = parsed.Format(time.RFC3339)
 		}
-		comments = append(comments, map[string]any{"id": id, "userId": author, "name": name, "body": body, "parent": reply, "position": pos, "deleted": deleted, "createdAt": created, "likes": likes, "liked": liked, "canDelete": u.IsAdmin || author == u.ID, "hasReplies": replies})
+		comments = append(comments, map[string]any{"id": id, "userId": author, "name": name, "body": body, "parent": reply, "position": pos, "deleted": deleted, "createdAt": created, "likes": likes, "liked": liked, "canDelete": u.IsAdmin || author == u.ID, "hasReplies": replies, "floor": floor, "depth": depth, "avatarVersion": avatarVersion})
 	}
 	err = rows.Err()
 	rows.Close()
@@ -112,6 +131,10 @@ func (s *Server) discussion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if thread != 0 || r.URL.Query().Has("before") || offset > 0 {
+		_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments, "next": next})
+		return
+	}
+	if kind == "thought" {
 		_ = json.NewEncoder(w).Encode(map[string]any{"comments": comments, "next": next})
 		return
 	}
@@ -165,7 +188,7 @@ func (s *Server) favoritePeople(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	offset = max(0, offset)
 	people := []map[string]string{}
-	rows, err := db.Db().QueryContext(r.Context(), `SELECT u.id,u.name FROM annotation a JOIN user u ON u.id=a.user_id JOIN site_privacy p ON p.user_id=u.id WHERE a.item_type=? AND a.item_id=? AND a.starred=1 AND p.favorites='public' ORDER BY u.name,u.id LIMIT 31 OFFSET ?`, kind, itemID, offset)
+	rows, err := db.Db().QueryContext(r.Context(), `SELECT u.id,COALESCE(NULLIF(profile.nickname,''),u.name) AS name FROM annotation a JOIN user u ON u.id=a.user_id JOIN site_privacy p ON p.user_id=u.id LEFT JOIN site_profile profile ON profile.user_id=u.id WHERE a.item_type=? AND a.item_id=? AND a.starred=1 AND p.favorites='public' ORDER BY name,u.id LIMIT 31 OFFSET ?`, kind, itemID, offset)
 	if err != nil {
 		siteError(w, 500, "读取收藏失败")
 		return
@@ -187,7 +210,7 @@ func (s *Server) favoritePeople(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	kind, itemID := chi.URLParam(r, "kind"), chi.URLParam(r, "id")
-	item, err := s.metadataObject(r.Context(), kind, itemID)
+	item, err := s.discussionObject(r.Context(), kind, itemID)
 	if err != nil {
 		siteError(w, 404, "对象不可访问")
 		return
@@ -264,7 +287,7 @@ func (s *Server) commentAccess(w http.ResponseWriter, r *http.Request) (int, str
 		siteError(w, 404, "评论不存在")
 		return 0, "", false
 	}
-	if _, err := s.metadataObject(r.Context(), kind, itemID); err != nil {
+	if _, err := s.discussionObject(r.Context(), kind, itemID); err != nil {
 		siteError(w, 404, "评论不可访问")
 		return 0, "", false
 	}
@@ -305,7 +328,7 @@ func (s *Server) likeComment(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if input.Liked {
 		var result sql.Result
-		result, err = db.Db().ExecContext(r.Context(), `INSERT INTO site_comment_like(comment_id,user_id) SELECT id,? FROM site_comment WHERE id=? AND deleted=0 ON CONFLICT DO NOTHING`, u.ID, id)
+		result, err = db.Db().ExecContext(r.Context(), `INSERT INTO site_comment_like(comment_id,user_id,created_at) SELECT id,?,CURRENT_TIMESTAMP FROM site_comment WHERE id=? AND deleted=0 ON CONFLICT DO NOTHING`, u.ID, id)
 		if err == nil {
 			if count, _ := result.RowsAffected(); count == 0 {
 				var deleted bool
@@ -334,21 +357,45 @@ func (s *Server) likeComment(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getPrivacy(w http.ResponseWriter, r *http.Request) {
 	u, _ := request.UserFrom(r.Context())
 	visibility := "private"
-	_ = db.Db().QueryRowContext(r.Context(), "SELECT favorites FROM site_privacy WHERE user_id=?", u.ID).Scan(&visibility)
-	_ = json.NewEncoder(w).Encode(map[string]string{"favorites": visibility})
+	var onlineCount bool
+	history, ratings := "private", "private"
+	_ = db.Db().QueryRowContext(r.Context(), "SELECT favorites,online_count,history,ratings FROM site_privacy WHERE user_id=?", u.ID).Scan(&visibility, &onlineCount, &history, &ratings)
+	_ = json.NewEncoder(w).Encode(map[string]any{"favorites": visibility, "onlineCount": onlineCount, "history": history, "ratings": ratings})
 }
 
 func (s *Server) savePrivacy(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Favorites string `json:"favorites"`
+		Favorites   string `json:"favorites"`
+		OnlineCount *bool  `json:"onlineCount"`
+		History     string `json:"history"`
+		Ratings     string `json:"ratings"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
-	if json.NewDecoder(r.Body).Decode(&input) != nil || (input.Favorites != "private" && input.Favorites != "count" && input.Favorites != "public") {
+	if json.NewDecoder(r.Body).Decode(&input) != nil ||
+		(input.Favorites == "" && input.OnlineCount == nil && input.History == "" && input.Ratings == "") ||
+		(input.Favorites != "" && input.Favorites != "private" && input.Favorites != "count" && input.Favorites != "public") {
 		siteError(w, 400, "可见性无效")
 		return
 	}
+	for _, value := range []string{input.History, input.Ratings} {
+		if value != "" && value != "private" && value != "friends" && value != "public" {
+			siteError(w, 400, "可见性无效")
+			return
+		}
+	}
 	u, _ := request.UserFrom(r.Context())
-	_, err := db.Db().ExecContext(r.Context(), "INSERT INTO site_privacy(user_id,favorites) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET favorites=excluded.favorites", u.ID, input.Favorites)
+	listeningRoom.Lock()
+	_, err := db.Db().ExecContext(r.Context(), `
+		INSERT INTO site_privacy(user_id,favorites,online_count,history,ratings)
+		VALUES(?,COALESCE(NULLIF(?,''),'private'),COALESCE(?,0),COALESCE(NULLIF(?,''),'private'),COALESCE(NULLIF(?,''),'private'))
+		ON CONFLICT(user_id) DO UPDATE SET
+		favorites=COALESCE(NULLIF(?,''),favorites), online_count=COALESCE(?,online_count),
+		history=COALESCE(NULLIF(?,''),history), ratings=COALESCE(NULLIF(?,''),ratings)`,
+		u.ID, input.Favorites, input.OnlineCount, input.History, input.Ratings, input.Favorites, input.OnlineCount, input.History, input.Ratings)
+	if err == nil && input.OnlineCount != nil && !*input.OnlineCount {
+		delete(listeningRoom.Online, u.ID)
+	}
+	listeningRoom.Unlock()
 	if err != nil {
 		siteError(w, 500, "保存设置失败")
 		return
@@ -358,14 +405,19 @@ func (s *Server) savePrivacy(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) siteProfile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "userId")
-	user, err := s.ds.User(r.Context()).Get(id)
-	if err != nil {
+	viewer, _ := request.UserFrom(r.Context())
+	visibility := "private"
+	people := make([]sitePerson, 1)
+	err := db.Db().QueryRowContext(r.Context(), `WITH viewer(id) AS (VALUES (?)) SELECT `+sitePersonColumns+`,COALESCE(privacy.favorites,'private')`+sitePeopleFrom+` WHERE u.id=?`, viewer.ID, id).Scan(append(people[0].columns(), &visibility)...)
+	if err == sql.ErrNoRows {
 		siteError(w, 404, "用户不存在")
 		return
 	}
-	visibility := "private"
-	_ = db.Db().QueryRowContext(r.Context(), "SELECT favorites FROM site_privacy WHERE user_id=?", id).Scan(&visibility)
-	viewer, _ := request.UserFrom(r.Context())
+	if err != nil {
+		siteError(w, 500, "读取个人资料失败")
+		return
+	}
+	sitePresence(viewer, people)
 	favorites := []map[string]any{}
 	var next any
 	if visibility == "public" || viewer.ID == id {
@@ -381,11 +433,12 @@ func (s *Server) siteProfile(w http.ResponseWriter, r *http.Request) {
             LEFT JOIN album b ON a.item_type='album' AND b.id=a.item_id
             LEFT JOIN artist t ON a.item_type='artist' AND t.id=a.item_id
             WHERE a.user_id=? AND a.starred=1 AND (?='' OR a.item_type=?) AND COALESCE(m.title,b.name,t.name) IS NOT NULL
+            AND (a.user_id=? OR EXISTS(SELECT 1 FROM site_privacy WHERE user_id=a.user_id AND favorites='public'))
             AND (? OR EXISTS(SELECT 1 FROM user_library access WHERE access.user_id=? AND (
                 access.library_id=m.library_id OR
                 access.library_id=b.library_id OR
                 EXISTS(SELECT 1 FROM library_artist lt WHERE lt.artist_id=t.id AND lt.library_id=access.library_id))))
-            ORDER BY a.starred_at DESC,a.item_type,a.item_id LIMIT 31 OFFSET ?`, id, kind, kind, viewer.IsAdmin, viewer.ID, offset)
+            ORDER BY a.starred_at DESC,a.item_type,a.item_id LIMIT 31 OFFSET ?`, id, kind, kind, viewer.ID, viewer.IsAdmin, viewer.ID, offset)
 		if e != nil {
 			siteError(w, 500, "读取收藏失败")
 			return
@@ -413,7 +466,7 @@ func (s *Server) siteProfile(w http.ResponseWriter, r *http.Request) {
 			next = offset + 30
 		}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "name": user.Name, "favorites": favorites, "visibility": visibility, "canView": visibility == "public" || viewer.ID == id, "next": next})
+	_ = json.NewEncoder(w).Encode(map[string]any{"person": people[0], "favorites": favorites, "canView": visibility == "public" || viewer.ID == id, "next": next})
 }
 
 func (s *Server) reportComment(w http.ResponseWriter, r *http.Request) {

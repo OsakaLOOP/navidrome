@@ -8,9 +8,10 @@ import styles from './full-screen-player-queue.module.css';
 import { Lyrics } from '/@/renderer/features/lyrics/lyrics';
 import { PlayQueue } from '/@/renderer/features/now-playing/components/play-queue';
 import { FullScreenSimilarSongs } from '/@/renderer/features/player/components/full-screen-similar-songs';
+import { openImportQueueModal } from '/@/renderer/features/playlists/components/import-queue-modal';
 import { useIsRadioActive } from '/@/renderer/features/radio/hooks/use-radio-player';
 import { DiscussionPanel, useDiscussionCount } from '/@/renderer/features/site/discussion-panel';
-import { RoomQueue, useRoomActive } from '/@/renderer/features/site/room';
+import { RoomQueuePanel, useRoomActive } from '/@/renderer/features/site/room';
 import { useListSettings, usePlaybackSettings, useSettingsStore } from '/@/renderer/store';
 import {
     useFullScreenPlayerStore,
@@ -18,6 +19,7 @@ import {
 } from '/@/renderer/store/full-screen-player.store';
 import { usePlayerSong } from '/@/renderer/store/player.store';
 import { ActionIcon } from '/@/shared/components/action-icon/action-icon';
+import { Flex } from '/@/shared/components/flex/flex';
 import { Group } from '/@/shared/components/group/group';
 import { AppIcon } from '/@/shared/components/icon/icon';
 import { Text } from '/@/shared/components/text/text';
@@ -166,6 +168,7 @@ const Controls = () => {
 export const FullScreenPlayerControls = Controls;
 
 export const FullScreenPlayerQueue = () => {
+    const { t } = useTranslation();
     const shared = useRoomActive();
     const radio = useIsRadioActive();
     const song = usePlayerSong();
@@ -196,13 +199,24 @@ export const FullScreenPlayerQueue = () => {
                         variants={moduleContentVariants}
                     >
                         {shared ? (
-                            <RoomQueue />
+                            <RoomQueuePanel />
                         ) : (
-                            <PlayQueue
-                                enableScrollShadow={false}
-                                listKey={ItemListKey.FULL_SCREEN}
-                                searchTerm={undefined}
-                            />
+                            <Flex direction="column" w="100%">
+                                <Group px="xs">
+                                    <ActionIcon
+                                        aria-label={t('queueImport.title')}
+                                        icon="mediaPlayLast"
+                                        onClick={() => openImportQueueModal()}
+                                        tooltip={{ label: t('queueImport.title') }}
+                                        variant="subtle"
+                                    />
+                                </Group>
+                                <PlayQueue
+                                    enableScrollShadow={false}
+                                    listKey={ItemListKey.FULL_SCREEN}
+                                    searchTerm={undefined}
+                                />
+                            </Flex>
                         )}
                     </motion.div>
                 ) : activeTab === 'related' ? (

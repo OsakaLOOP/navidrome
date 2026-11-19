@@ -7,10 +7,11 @@ import styles from './sidebar-item.module.css';
 import { Button, ButtonProps } from '/@/shared/components/button/button';
 
 interface SidebarItemProps extends Omit<ButtonProps, 'component' | 'ref'> {
+    active?: boolean;
     to: LinkProps['to'];
 }
 
-export const SidebarItem = ({ children, className, to, ...props }: SidebarItemProps) => {
+export const SidebarItem = ({ active, children, className, to, ...props }: SidebarItemProps) => {
     const location = useLocation();
     const toPath = typeof to === 'string' ? to : to.pathname || '';
     const isActive = location.pathname === toPath;
@@ -22,9 +23,10 @@ export const SidebarItem = ({ children, className, to, ...props }: SidebarItemPr
 
     return (
         <Button
+            aria-current={isActive ? 'page' : undefined}
             className={clsx(
                 {
-                    [styles.active]: isActive,
+                    [styles.active]: active ?? isActive,
                     [styles.disabled]: props.disabled,
                     [styles.link]: true,
                     [styles.root]: true,

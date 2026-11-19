@@ -130,6 +130,11 @@ export function beginSharedPlayback(handler: NonNullable<typeof sharedPlayback>)
     syncSharedSong(undefined, 0, false);
 }
 
+export function getPersonalQueueSongs() {
+    const queue = personalPlayback?.queue;
+    return queue ? queue.default.map((id) => queue.songs[id]).filter(Boolean) : [];
+}
+
 // Calculates the next song based on repeat mode and current position
 export function calculateNextSong(
     currentIndex: number,
@@ -222,11 +227,18 @@ export function setSharedPlayback(handler?: (command: SharedPlaybackCommand) => 
     sharedPlayback = handler;
 }
 
-export function syncSharedSong(song: QueueSong | undefined, position: number, playing: boolean) {
+export function syncSharedSong(
+    song: QueueSong | undefined,
+    position: number,
+    playing: boolean,
+    forceSeek = false,
+) {
     const { player, queue } = usePlayerStoreBase.getState();
     const sameSong = queue.default[0] === song?._uniqueId;
     const seek =
-        !sameSong || Math.abs(useTimestampStoreBase.getState().timestamp - position) > 0.45;
+        forceSeek ||
+        !sameSong ||
+        Math.abs(useTimestampStoreBase.getState().timestamp - position) > 0.45;
     if (seek) setTimestampStore(position);
     const status = playing && song ? PlayerStatus.PLAYING : PlayerStatus.PAUSED;
     if (sameSong && !seek && player.status === status) return;

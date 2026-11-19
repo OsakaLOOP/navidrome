@@ -22,6 +22,11 @@ const AccountPage = lazy(() => import('/@/renderer/features/site/account-page'))
 const ProfilePage = lazy(() =>
     import('/@/renderer/features/site/account-page').then((m) => ({ default: m.ProfilePage })),
 );
+const CommunityDiscussionPage = lazy(() =>
+    import('/@/renderer/features/site/community').then((module) => ({
+        default: module.CommunityDiscussionPage,
+    })),
+);
 const TrackPage = lazy(() => import('/@/renderer/features/site/track-page'));
 
 const AlbumListRoute = lazy(() => import('/@/renderer/features/albums/routes/album-list-route'));
@@ -239,6 +244,10 @@ export const AppRouter = () => {
                                         <Route element={<RoomPage />} path="/together" />
                                         <Route element={<OfflinePage />} path="/offline" />
                                         <Route element={<AccountPage />} path="/account" />
+                                        <Route
+                                            element={<CommunityDiscussionPage />}
+                                            path="/community/discussion/:kind/:id/:comment?"
+                                        />
                                         <Route
                                             element={<ProfilePage />}
                                             path="/community/profile/:userId"

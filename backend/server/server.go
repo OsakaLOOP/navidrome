@@ -249,6 +249,7 @@ func (s *Server) mountRootRedirector() {
 
 func (s *Server) frontendAssetsHandler() http.Handler {
 	r := chi.NewRouter()
+	r.Use(requireTrailingSlash(s.appRoot))
 
 	r.Handle("/", Index(s.ds, ui.BuildAssets()))
 	r.Handle("/*", http.StripPrefix(s.appRoot, http.FileServer(http.FS(ui.BuildAssets()))))
